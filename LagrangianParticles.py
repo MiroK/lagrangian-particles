@@ -16,6 +16,9 @@ from mpi4py import MPI as pyMPI
 from collections import defaultdict
 import matplotlib.colors as colors
 import matplotlib.cm as cmx
+import time
+
+__DEBUG__ = False
 
 # Disable printing
 __DEBUG__ = False
@@ -181,6 +184,7 @@ class LagrangianParticles:
                     pmap += self.mesh, c, particle, particle_properties
         # All particles must be found on some process
         comm.Reduce(my_found, all_found, root=0)
+
         if self.myrank == 0:
             missing = np.where(all_found == 0)[0]
             n_missing = len(missing)
@@ -188,6 +192,7 @@ class LagrangianParticles:
             assert n_missing == 0,\
                 '%d particles are not located in mesh' % n_missing
 
+            # Print particle info
             if self.__debug:
                 for i in missing:
                     print 'Missing', list_of_particles[i].position
@@ -195,9 +200,9 @@ class LagrangianParticles:
                 n_duplicit = len(np.where(all_found > 1)[0])
                 print 'There are %d duplicit particles' % n_duplicit
 
-
     def step(self, u, dt):
         'Move particles by forward Euler x += u*dt'
+        start = time.time()
         for cwp in self.particle_map.itervalues():
             # Restrict once per cell
             u.restrict(self.coefficients,
@@ -214,7 +219,12 @@ class LagrangianParticles:
                                                 cwp.orientation())
                 x[:] = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:]
         # Recompute the map
-        self.relocate()
+        stop_shift = time.time() - start
+        start = time.time()
+        info = self.relocate()
+        stop_reloc = time.time() - start
+        # We return computation time per process
+        return (stop_shift, stop_reloc)
 
     def relocate(self):
         # Relocate particles on cells and processors
@@ -250,6 +260,7 @@ class LagrangianParticles:
                                            key=lambda t: t[1],
                                            reverse=True):
                 particle = p_map.pop(old_cell_id, i)
+
                 if new_cell_id == -1 or new_cell_id == __UINT32_MAX__ :
                     list_of_escaped_particles.append(particle)
                 else:
@@ -277,7 +288,7 @@ class LagrangianParticles:
 
     def total_number_of_particles(self):
         'Return number of particles in total and on process.'
-        num_p = self.cellparticles.total_number_of_particles()
+        num_p = self.particle_map.total_number_of_particles()
         tot_p = comm.allreduce(num_p)
         return (tot_p, num_p)
 
@@ -349,7 +360,6 @@ class LagrangianParticles:
             ax.set_xlabel('proc')
             ax.set_ylabel('number of particles')
             ax.set_xlim(-0.25, max(self.all_processes)+0.25)
-
             return np.sum(all_particles)
         else:
             return None

@@ -16,6 +16,9 @@ from mpi4py import MPI as pyMPI
 from collections import defaultdict
 import matplotlib.colors as colors
 import matplotlib.cm as cmx
+import time
+
+__DEBUG__ = False
 
 comm = pyMPI.COMM_WORLD
 
@@ -103,7 +106,7 @@ class CellParticleMap(dict):
 class LagrangianParticles:
     'Particles moved by the velocity field in V.'
     def __init__(self, V):
-        self.__debug = True
+        self.__debug = __DEBUG__
 
         self.V = V
         self.mesh = V.mesh()
@@ -178,21 +181,25 @@ class LagrangianParticles:
                     pmap += self.mesh, c, particle, particle_properties
         # All particles must be found on some process
         comm.Reduce(my_found, all_found, root=0)
+
         if self.myrank == 0:
             missing = np.where(all_found == 0)[0]
             n_missing = len(missing)
-            if self.__debug:
-                for i in missing:
-                    print 'Missing', list_of_particles[i].position
 
             assert n_missing == 0,\
                 '%d particles are not located in mesh' % n_missing
 
-            n_duplicit = len(np.where(all_found > 1)[0])
-            print 'There are %d duplicit particles' % n_duplicit
+            # Print particle info
+            if self.__debug:
+                for i in missing:
+                    print 'Missing', list_of_particles[i].position
+
+                n_duplicit = len(np.where(all_found > 1)[0])
+                print 'There are %d duplicit particles' % n_duplicit
 
     def step(self, u, dt):
         'Move particles by forward Euler x += u*dt'
+        start = time.time()
         for cwp in self.particle_map.itervalues():
             # Restrict once per cell
             u.restrict(self.coefficients,
@@ -209,7 +216,12 @@ class LagrangianParticles:
                                                 cwp.orientation())
                 x[:] = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:]
         # Recompute the map
-        self.relocate()
+        stop_shift = time.time() - start
+        start = time.time()
+        info = self.relocate()
+        stop_reloc = time.time() - start
+        # We return computation time per process
+        return (stop_shift, stop_reloc)
 
     def relocate(self):
         # Relocate particles on cells and processors
@@ -245,7 +257,7 @@ class LagrangianParticles:
                                            key=lambda t: t[1],
                                            reverse=True):
                 particle = p_map.pop(old_cell_id, i)
-                if new_cell_id == -1:
+                if new_cell_id == -1 or new_cell_id == __UINT32_MAX__:
                     list_of_escaped_particles.append(particle)
                 else:
                     p_map += self.mesh, new_cell_id, particle
@@ -272,7 +284,7 @@ class LagrangianParticles:
 
     def total_number_of_particles(self):
         'Return number of particles in total and on process.'
-        num_p = self.cellparticles.total_number_of_particles()
+        num_p = self.particle_map.total_number_of_particles()
         tot_p = comm.allreduce(num_p)
         return (tot_p, num_p)
 
@@ -344,7 +356,6 @@ class LagrangianParticles:
             ax.set_xlabel('proc')
             ax.set_ylabel('number of particles')
             ax.set_xlim(-0.25, max(self.all_processes)+0.25)
-
             return np.sum(all_particles)
         else:
             return None
@@ -354,11 +365,12 @@ class LagrangianParticles:
 
 if __name__ == '__main__':
     from dolfin import Point, VectorFunctionSpace, interpolate
-    from particle_generators import RandomCircle
+    from particle_generators import RandomRectangle
     import matplotlib.pyplot as plt
 
     mesh = df.RectangleMesh(0, 0, 1, 1, 10, 10)
-    particle_positions = RandomCircle([0.5, 0.75], 0.15).generate([100, 100])
+    particle_positions = RandomRectangle(0.125, 0.25, 0.75, 0.8).generate([100,
+                                                                           100])
 
     V = VectorFunctionSpace(mesh, 'CG', 1)
     lp = LagrangianParticles(V)
@@ -367,29 +379,92 @@ if __name__ == '__main__':
                                    "2*sin(pi*x[0])*cos(pi*x[0])*pow(sin(pi*x[1]),2)")),
                     V)
 
+    # Initialize scatter plot
     fig0 = plt.figure()
     lp.scatter(fig0)
     fig0.suptitle('Initial')
-
-    if comm.Get_rank() == 0:
-        fig0.show()
-
+    # Initialize bar plot
     fig1 = plt.figure()
     lp.bar(fig1)
     fig1.suptitle('Initial')
 
-    if comm.Get_rank() == 0:
-        fig1.show()
-
     plt.ion()
 
-    dt = 0.01
-    for step in range(500):
-        lp.step(u, dt=dt)
+    # Data for comunicating cpu time and particles count
+    my_cpu = np.zeros(1, 'float')
+    all_cpu = np.zeros(comm.Get_size(), 'float')
 
+    my_count = np.zeros(1, 'I')
+    all_count = np.zeros(comm.Get_size(), 'I')
+
+    # Steps to be used in computation
+    steps = np.arange(500)
+
+    if comm.Get_rank() == 0:
+        procs = range(comm.Get_size())
+        # Data for history of cpu time per step and particle count
+        cpu_histories = np.zeros((len(steps), len(procs)))
+        count_histories = np.zeros_like(cpu_histories)
+        # Similar to scatter we color history curve by proces it belongs to
+        cmap = plt.get_cmap('jet')
+        cnorm = colors.Normalize(vmin=0, vmax=len(procs))
+        scalarMap = cmx.ScalarMappable(norm=cnorm, cmap=cmap)
+        # Two subplots, one for histories of cpu time, the other for particle
+        # count
+        fig2, axarr = plt.subplots(2, sharex=True)
+        lines = [[axarr[i].plot(steps,
+                                steps,
+                                label='%d' % proc,
+                                c=scalarMap.to_rgba(proc))[0]
+                  for proc in procs]
+                 for i in range(2)]
+        # Guess this should be enough for time step
+        axarr[0].set_ylim([-0.1, 2])
+        axarr[0].set_ylabel('s/step')
+        # We share axes so remove labels of x-axies
+        plt.setp([a.get_xticklabels() for a in fig2.axes[:0]], visible=False)
+        # Particle loaf handles the x-axes
+        axarr[1].set_ylim([-10, len(particle_positions)+10])
+        axarr[1].set_ylabel('number of particles')
+        axarr[1].set_xlabel('step')
+        # One legend shared for both plots
+        axarr[0].legend(loc='upper center', bbox_to_anchor=(0.5, 1.25),
+                        ncol=len(procs))
+        # Put plots togeter
+        fig2.subplots_adjust(hspace=0.05)
+
+        fig0.show()
+        fig1.show()
+        fig2.show()
+
+    dt = 0.01
+    for step in steps:
+        # Communicate the cpu time
+        my_cpu[0] = sum(lp.step(u, dt=dt))
+        comm.Gather(my_cpu, all_cpu, root=0)
+        # Communicate particle load
+        my_count[0] = lp.total_number_of_particles()[1]
+        comm.Gather(my_count, all_count, root=0)
+
+        # Update history plot
+        if comm.Get_rank() == 0:
+
+            cpu_histories[step, :] = all_cpu
+            count_histories[step, :] = all_count
+
+            for proc in procs:
+                lines[0][proc].set_ydata(cpu_histories[:, proc])
+
+            for proc in procs:
+                lines[1][proc].set_ydata(count_histories[:, proc])
+
+            fig2.canvas.draw()
+
+        # Update scatter
         lp.scatter(fig0)
         fig0.suptitle('At step %d' % step)
 
+        # Update bar plot
         n_particles = lp.bar(fig1)
         if n_particles is not None:
             fig1.suptitle('At step %d, total particles %d' % (step,
@@ -399,3 +474,4 @@ if __name__ == '__main__':
         fig0.clf()
         fig1.canvas.draw()
         fig1.clf()
+

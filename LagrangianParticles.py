@@ -224,7 +224,7 @@ class LagrangianParticles:
         new_cell_map = defaultdict(list)
         for cwp in p_map.itervalues():
             for i, particle in enumerate(cwp.particles):
-                point = Point(*particle.position)
+                point = df.Point(*particle.position)
                 # Search only if particle moved outside original cell
                 if not cwp.contains(point):
                     found = False
@@ -318,7 +318,7 @@ class LagrangianParticles:
                     self.particle0.recv(proc)
                     received[proc].append(copy.copy(self.particle0.position))
 
-            cmap = plt.get_cmap('jet')
+            cmap = cmx.get_cmap('jet')
             cnorm = colors.Normalize(vmin=0, vmax=self.num_processes)
             scalarMap = cmx.ScalarMappable(norm=cnorm, cmap=cmap)
 
@@ -355,52 +355,3 @@ class LagrangianParticles:
             return None
 
 
-# -----------------------------------------------------------------------------
-
-if __name__ == '__main__':
-    from dolfin import Point, VectorFunctionSpace, interpolate
-    from particle_generators import RandomCircle
-    import matplotlib.pyplot as plt
-
-    mesh = df.RectangleMesh(0, 0, 1, 1, 10, 10)
-    particle_positions = RandomCircle([0.5, 0.75], 0.15).generate([100, 100])
-
-    V = VectorFunctionSpace(mesh, 'CG', 1)
-    lp = LagrangianParticles(V)
-    lp.add_particles(particle_positions)
-    u = interpolate(df.Expression(("-2*sin(pi*x[1])*cos(pi*x[1])*pow(sin(pi*x[0]),2)",
-                                   "2*sin(pi*x[0])*cos(pi*x[0])*pow(sin(pi*x[1]),2)")),
-                    V)
-
-    fig0 = plt.figure()
-    lp.scatter(fig0)
-    fig0.suptitle('Initial')
-
-    if comm.Get_rank() == 0:
-        fig0.show()
-
-    fig1 = plt.figure()
-    lp.bar(fig1)
-    fig1.suptitle('Initial')
-
-    if comm.Get_rank() == 0:
-        fig1.show()
-
-    plt.ion()
-
-    dt = 0.01
-    for step in range(500):
-        lp.step(u, dt=dt)
-
-        lp.scatter(fig0)
-        fig0.suptitle('At step %d' % step)
-
-        n_particles = lp.bar(fig1)
-        if n_particles is not None:
-            fig1.suptitle('At step %d, total particles %d' % (step,
-                                                              n_particles))
-
-        fig0.canvas.draw()
-        fig0.clf()
-        fig1.canvas.draw()
-        fig1.clf()

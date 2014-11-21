@@ -20,7 +20,7 @@ import matplotlib.cm as cmx
 comm = pyMPI.COMM_WORLD
 
 # collisions tests return this value or -1 if there is no collision
-__UINT32_MAX__ = np.iifo('uint32').max
+__UINT32_MAX__ = np.iinfo('uint32').max
 
 class Particle:
     'Lagrangian particle with position and some other passive properties.'

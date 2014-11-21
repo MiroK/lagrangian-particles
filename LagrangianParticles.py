@@ -17,6 +17,9 @@ from collections import defaultdict
 import matplotlib.colors as colors
 import matplotlib.cm as cmx
 
+# Disable printing
+__DEBUG__ = False
+
 comm = pyMPI.COMM_WORLD
 
 # collisions tests return this value or -1 if there is no collision
@@ -103,7 +106,7 @@ class CellParticleMap(dict):
 class LagrangianParticles:
     'Particles moved by the velocity field in V.'
     def __init__(self, V):
-        self.__debug = True
+        self.__debug = __DEBUG__
 
         self.V = V
         self.mesh = V.mesh()
@@ -181,15 +184,17 @@ class LagrangianParticles:
         if self.myrank == 0:
             missing = np.where(all_found == 0)[0]
             n_missing = len(missing)
-            if self.__debug:
-                for i in missing:
-                    print 'Missing', list_of_particles[i].position
 
             assert n_missing == 0,\
                 '%d particles are not located in mesh' % n_missing
 
-            n_duplicit = len(np.where(all_found > 1)[0])
-            print 'There are %d duplicit particles' % n_duplicit
+            if self.__debug:
+                for i in missing:
+                    print 'Missing', list_of_particles[i].position
+
+                n_duplicit = len(np.where(all_found > 1)[0])
+                print 'There are %d duplicit particles' % n_duplicit
+
 
     def step(self, u, dt):
         'Move particles by forward Euler x += u*dt'
@@ -245,7 +250,7 @@ class LagrangianParticles:
                                            key=lambda t: t[1],
                                            reverse=True):
                 particle = p_map.pop(old_cell_id, i)
-                if new_cell_id == -1:
+                if new_cell_id == -1 or new_cell_id == __UINT32_MAX__ :
                     list_of_escaped_particles.append(particle)
                 else:
                     p_map += self.mesh, new_cell_id, particle

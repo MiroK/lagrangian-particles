@@ -19,6 +19,8 @@ import matplotlib.cm as cmx
 
 comm = pyMPI.COMM_WORLD
 
+# collisions tests return this value or -1 if there is no collision
+__UINT32_MAX__ = np.iifo('uint32').max
 
 class Particle:
     'Lagrangian particle with position and some other passive properties.'
@@ -165,7 +167,7 @@ class LagrangianParticles:
         all_found = np.zeros(len(list_of_particles), 'I')
         for i, particle in enumerate(list_of_particles):
             c = self.locate(particle)
-            if not c == -1:
+            if not (c == -1 or c == __UINT32_MAX__):
                 my_found[i] = True
                 if not has_properties:
                     pmap += self.mesh, c, particle
@@ -348,16 +350,15 @@ class LagrangianParticles:
             return None
 
 
-# -------------------------------MAIN-----------------------------------------
+# -----------------------------------------------------------------------------
 
 if __name__ == '__main__':
     from dolfin import Point, VectorFunctionSpace, interpolate
-    from particle_generators import RandomTensorCircle
+    from particle_generators import RandomCircle
     import matplotlib.pyplot as plt
 
     mesh = df.RectangleMesh(0, 0, 1, 1, 10, 10)
-    particle_positions = RandomTensorCircle([0.5, 0.75],
-                                            0.15).generate([100, 100])
+    particle_positions = RandomCircle([0.5, 0.75], 0.15).generate([100, 100])
 
     V = VectorFunctionSpace(mesh, 'CG', 1)
     lp = LagrangianParticles(V)

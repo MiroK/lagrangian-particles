@@ -79,11 +79,6 @@ class RandomRectangle(RandomGenerator):
         RandomGenerator.__init__(self, [[ax, bx], [ay, by]], lambda x: True)
 
 
-class RandomSquare(RandomRectangle):
-    def __init__(self, a, b):
-        RandomRectangle.__init__(self, a, b, a, b)
-
-
 class RandomCircle(RandomGenerator):
     def __init__(self, center, radius):
         assert radius > 0
@@ -101,10 +96,9 @@ if __name__ == '__main__':
 
     r_rectangle = RandomRectangle(0, 2, 1, 5).generate([100, 100],
                                                        method='tensor')
-    r_square = RandomSquare(3, 4).generate([100, 100])
     r_circle = RandomCircle([0, 0], 1).generate([100, 100])
 
-    for points in [r_rectangle, r_square, r_circle]:
+    for points in [r_rectangle, r_circle]:
         plt.figure()
         plt.scatter(points[:, 0], points[:, 1])
         plt.axis('equal')

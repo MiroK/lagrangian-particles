@@ -1,7 +1,8 @@
 from LagrangianParticles import LagrangianParticles
 from particle_generators import RandomCircle
 import matplotlib.pyplot as plt
-from dolfin import VectorFunctionSpace, interpolate, RectangleMesh, Expression
+from dolfin import VectorFunctionSpace, interpolate, RectangleMesh, Expression,\
+    plot, interactive, Function, FunctionSpace
 from mpi4py import MPI as pyMPI
 
 comm = pyMPI.COMM_WORLD
@@ -13,6 +14,10 @@ V = VectorFunctionSpace(mesh, 'CG', 1)
 u = interpolate(Expression(("-2*sin(pi*x[1])*cos(pi*x[1])*pow(sin(pi*x[0]),2)",
                             "2*sin(pi*x[0])*cos(pi*x[0])*pow(sin(pi*x[1]),2)")),
                 V)
+S = FunctionSpace(mesh, 'DG', 0)
+rho = Function(S)
+c = Function(S)
+
 lp = LagrangianParticles(V)
 lp.add_particles(particle_positions)
 
@@ -25,6 +30,10 @@ if comm.Get_rank() == 0:
 
 plt.ion()
 
+
+lp.particle_density(rho)
+plot(rho, title='0')
+
 dt = 0.01
 for step in range(500):
     lp.step(u, dt=dt)
@@ -33,3 +42,8 @@ for step in range(500):
     fig.suptitle('At step %d' % step)
     fig.canvas.draw()
     fig.clf()
+
+    lp.particle_density(rho)
+    plot(rho, title='%d' % step)
+
+interactive()

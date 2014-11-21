@@ -364,4 +364,23 @@ class LagrangianParticles:
         else:
             return None
 
+    def particle_density(self, rho):
+        'Make rho represent particle density.'
+        assert rho.ufl_element().family() == 'Discontinuous Lagrange'
+        assert rho.ufl_element().degree() == 0
+        assert rho.ufl_element().value_shape() == ()
 
+        vec = rho.vector()
+        vec.zero()
+
+        dofmap = rho.function_space().dofmap()
+        first, last = dofmap.ownership_range()
+        values = np.zeros(last-first)
+
+        for cell_id, cwp in self.particle_map.iteritems():
+            dof = dofmap.cell_dofs(cell_id)[0]
+            if first <= first+dof < last:
+                values[dof] = len(cwp)/cwp.volume()
+
+        vec.set_local(values)
+        vec.apply('insert')

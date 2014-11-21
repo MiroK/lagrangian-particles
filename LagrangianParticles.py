@@ -1,8 +1,8 @@
-#__authors__ = ('Mikael Mortensen <mikaem@math.uio.no>',
-#               'Miroslav Kuchta <mirok@math.uio.no>')
-#__date__ = '2014-19-11'
-#__copyright__ = 'Copyright (C) 2011' + __authors__
-#__license__  = 'GNU Lesser GPL version 3 or any later version'
+# __authors__ = ('Mikael Mortensen <mikaem@math.uio.no>',
+#                'Miroslav Kuchta <mirok@math.uio.no>')
+# __date__ = '2014-19-11'
+# __copyright__ = 'Copyright (C) 2011' + __authors__
+# __license__  = 'GNU Lesser GPL version 3 or any later version'
 '''
 This module contains functionality for Lagrangian tracking of particles with
 DOLFIN
@@ -327,44 +327,37 @@ class LagrangianParticles:
             ax.legend(loc='best')
             ax.axis([0, 1, 0, 1])
 
-# -----------------------------SEEDING----------------------------------------
+    def bar(self, fig):
+        'Bar plot of particle distribution.'
+        ax = fig.gca()
 
-def circle(center, radius, N):
-    '''
-    Put N particles on circle with radius centered at center.
-    '''
-    pi = df.pi
-    theta = np.linspace(0, 2.*pi, N, endpoint=False)
-    r = np.linspace(0,radius,10)
-    xs, ys = center[0] + radius*np.cos(theta), center[1] + radius*np.sin(theta)
-    return [np.array([x, y]) for x, y, in zip(xs, ys)]
+        p_map = self.particle_map
+        all_particles = np.zeros(self.num_processes, dtype='I')
+        my_particles = p_map.total_number_of_particles()
+        # Root learns about count of particles on all processes
+        comm.Gather(np.array([my_particles], 'I'), all_particles, root=0)
 
-def hat(x0,x1,y0,y1,N):
-	"""
-	Put N particles at random poisitions inside a Rectangle
-	"""
-	xs = []
-	ys = []
-	for i in range(N):
-		xrand = np.random.uniform(x0,x1)
-		yrand = np.random.uniform(y0,y1)
-		xs.append(xrand)
-		ys.append(yrand)
+        if self.myrank == 0 and self.num_processes > 1:
+            ax.bar(np.array(self.all_processes)-0.25, all_particles, 0.5)
+            ax.set_xlabel('proc')
+            ax.set_ylabel('number of particles')
+            ax.set_xlim(-0.25, max(self.all_processes)+0.25)
 
-	return [np.array([x, y]) for x, y, in zip(xs, ys)]
-
+            return np.sum(all_particles)
+        else:
+            return None
 
 
 # -------------------------------MAIN-----------------------------------------
 
 if __name__ == '__main__':
-    from dolfin import UnitSquareMesh, Point, VectorFunctionSpace, interpolate,\
-        Constant
+    from dolfin import Point, VectorFunctionSpace, interpolate
+    from particle_generators import RandomTensorCircle
     import matplotlib.pyplot as plt
 
-    mesh = df.RectangleMesh(0,0,1,1,10,10)
-    particle_positions = circle([0.5, 0.75], 0.15, 200)
-    #particle_positions = hat(0.8,1.2,0,0.4,10000)
+    mesh = df.RectangleMesh(0, 0, 1, 1, 10, 10)
+    particle_positions = RandomTensorCircle([0.5, 0.75],
+                                            0.15).generate([100, 100])
 
     V = VectorFunctionSpace(mesh, 'CG', 1)
     lp = LagrangianParticles(V)
@@ -372,29 +365,36 @@ if __name__ == '__main__':
     u = interpolate(df.Expression(("-2*sin(pi*x[1])*cos(pi*x[1])*pow(sin(pi*x[0]),2)",
                                    "2*sin(pi*x[0])*cos(pi*x[0])*pow(sin(pi*x[1]),2)")),
                     V)
-    # u_expression = df.Expression(("sin(2*t*pi)","0"), t=0.0)
-    # u = df.Function(V)
-    # u.interpolate(u_expression)
-    # df.plot(u)
 
-    fig = plt.figure()
-    fig.show()
-    lp.scatter(fig)
-    fig.suptitle('Initial')
+    fig0 = plt.figure()
+    lp.scatter(fig0)
+    fig0.suptitle('Initial')
+
+    if comm.Get_rank() == 0:
+        fig0.show()
+
+    fig1 = plt.figure()
+    lp.bar(fig1)
+    fig1.suptitle('Initial')
+
+    if comm.Get_rank() == 0:
+        fig1.show()
+
     plt.ion()
 
-    # -->
     dt = 0.01
     for step in range(500):
-	t = step*dt
-	#u_expression.t = t
-	#u = interpolate(u_expression,V)
-	#df.plot(u)
         lp.step(u, dt=dt)
-        #fig = plt.figure()
-        lp.scatter(fig)
-        fig.suptitle('At step %d' % step)
 
-	plt.draw()
-	fig.clf()
+        lp.scatter(fig0)
+        fig0.suptitle('At step %d' % step)
 
+        n_particles = lp.bar(fig1)
+        if n_particles is not None:
+            fig1.suptitle('At step %d, total particles %d' % (step,
+                                                              n_particles))
+
+        fig0.canvas.draw()
+        fig0.clf()
+        fig1.canvas.draw()
+        fig1.clf()

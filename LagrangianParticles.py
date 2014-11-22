@@ -341,7 +341,8 @@ class LagrangianParticles:
 
                     ax.scatter(xy[::skip, 0], xy[::skip, 1],
                                label='%d' % proc,
-                               c=scalarMap.to_rgba(proc))
+                               c=scalarMap.to_rgba(proc),
+                               edgecolor='none')
             ax.legend(loc='best')
             ax.axis([0, 1, 0, 1])
 

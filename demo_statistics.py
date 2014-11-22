@@ -114,3 +114,7 @@ for step in steps:
     fig0.clf()
     fig1.canvas.draw()
     fig1.clf()
+
+# Save
+if comm.Get_rank() == 0:
+    fig2.savefig('history.pdf')

@@ -17,6 +17,7 @@ from collections import defaultdict
 import matplotlib.colors as colors
 import matplotlib.cm as cmx
 import time
+import random
 
 __DEBUG__ = False
 
@@ -25,14 +26,16 @@ __DEBUG__ = False
 
 comm = pyMPI.COMM_WORLD
 
+
 # collisions tests return this value or -1 if there is no collision
 __UINT32_MAX__ = np.iinfo('uint32').max
 
 class Particle:
     'Lagrangian particle with position and some other passive properties.'
-    def __init__(self, x):
+    def __init__(self, x, c=1.0):
         self.position = x
         self.properties = {}
+        self.properties["c"] = c
 
     def send(self, dest):
         'Send particle to dest.'
@@ -66,6 +69,16 @@ class CellWithParticles(df.Cell):
     def __len__(self):
         'Number of particles in cell.'
         return len(self.particles)
+    
+    def mean_concentration(self):
+        if self.__len__ == 0:
+            return 0
+        
+        else:
+            c = 0
+            for particle in self.particles:
+                c += particle.properties["c"]
+            return c/self.volume()
 
 
 class CellParticleMap(dict):
@@ -115,6 +128,13 @@ class LagrangianParticles:
         self.mesh = V.mesh()
         self.mesh.init(2, 2)  # Cell-cell connectivity for neighbors of cell
         self.tree = self.mesh.bounding_box_tree()  # Tree for isection comput.
+        self.DG0 = df.FunctionSpace(self.mesh, "DG", 0)
+        self.CG1 = df.FunctionSpace(self.mesh, "CG", 1)
+        self.rho = df.Function(self.DG0)
+        self.maxrho = 1.0
+        self.dt = 0.001
+        self.h = 0.01
+        self.K = 0.01  # Diffusivity
 
         # Allocate some variables used to look up the velocity
         # Velocity is computed as U_i*basis_i where i is the dimension of
@@ -135,6 +155,7 @@ class LagrangianParticles:
         # For VectorFunctionSpace CG1 this is 3x3
         self.basis_matrix = np.zeros((self.element.space_dimension(),
                                       self.num_tensor_entries))
+        
 
         # Allocate a dictionary to hold all particles
         self.particle_map = CellParticleMap()
@@ -173,6 +194,7 @@ class LagrangianParticles:
         all_found = np.zeros(len(list_of_particles), 'I')
         for i, particle in enumerate(list_of_particles):
             c = self.locate(particle)
+            #print c
             if not (c == -1 or c == __UINT32_MAX__):
                 my_found[i] = True
                 if not has_properties:
@@ -189,8 +211,8 @@ class LagrangianParticles:
             missing = np.where(all_found == 0)[0]
             n_missing = len(missing)
 
-            assert n_missing == 0,\
-                '%d particles are not located in mesh' % n_missing
+            #assert n_missing == 0,\
+            #    '%d particles are not located in mesh' % n_missing
 
             # Print particle info
             if self.__debug:
@@ -202,7 +224,9 @@ class LagrangianParticles:
 
     def step(self, u, dt):
         'Move particles by forward Euler x += u*dt'
+        
         start = time.time()
+        num_particles = []
         for cwp in self.particle_map.itervalues():
             # Restrict once per cell
             u.restrict(self.coefficients,
@@ -217,14 +241,60 @@ class LagrangianParticles:
                                                 x,
                                                 cwp.get_vertex_coordinates(),
                                                 cwp.orientation())
-                x[:] = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:]
+                
+                var = 1./3
+                R1 = random.gauss(0,var)
+                R2 = random.gauss(0,var)
+                #print R
+                #import time
+                #time.sleep(1)
+                x[:] = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:] + [R1*np.sqrt(2*self.K*dt/var), R2*np.sqrt(2*self.K*dt/var)]
+                
+                #c_old = particle.properties["c"]
+                #print "%s , in cell %g " % (c_old, cwp.index())
+                #particle.properties["c"] = self.diffuse(particle, c_old, self.rho, self.dt, self.h)
+
+            
+                
+            num_particles.append(len(cwp))
+        #print "Min number of particles per cell: ", min(num_particles)
+        print "Max number of particles per cell: ", max(num_particles)
+        #print "Averager number of particles per cell: ", np.average(num_particles)
+        
+                
         # Recompute the map
         stop_shift = time.time() - start
         start = time.time()
         info = self.relocate()
+        #print info
         stop_reloc = time.time() - start
         # We return computation time per process
+        #df.interactive()
         return (stop_shift, stop_reloc)
+    
+    def diffuse(self, particle, c_, rho_, dt, h, mu=1e-2):
+        x = particle.position
+        xm = x[0] - h
+        xp = x[0] + h
+        ym = x[1] - h
+        yp = x[1] + h
+        #if self.dim == 3:
+        #    zm = x[2] - h
+        #    zp = x[2] + h
+            
+        rho_x = rho_(*x)
+        try:
+            rho_xm = rho_(xm, x[1])
+            rho_xp = rho_(xp, x[1])
+            rho_ym = rho_(x[0], ym)
+            rho_yp = rho_(x[0], yp)
+        except:
+            return c_
+        #print rho_xm 
+        #print mu*dt/h**2
+        c = c_ + mu*dt/h**2*(rho_xm - 2*rho_x + rho_xp + rho_ym - 2*rho_x + rho_yp)
+        print "%g + %g*(%g - 2*%g + %g + %g - 2*%g + %g)" % (c_, mu*dt/h**2, rho_xm, rho_x, rho_xp, rho_ym, rho_x, rho_yp)
+        return c
 
     def relocate(self):
         # Relocate particles on cells and processors
@@ -236,17 +306,21 @@ class LagrangianParticles:
             for i, particle in enumerate(cwp.particles):
                 point = df.Point(*particle.position)
                 # Search only if particle moved outside original cell
+                #print "cwp %g contains %g" % (cwp.index(), cwp.contains(point))
                 if not cwp.contains(point):
+                    #print "Moved outside"
                     found = False
                     # Check neighbor cells
                     for neighbor in df.cells(cwp):
                         if neighbor.contains(point):
                             new_cell_id = neighbor.index()
+                            #print "New cell id:",new_cell_id
                             found = True
                             break
                     # Do a completely new search if not found by now
                     if not found:
                         new_cell_id = self.locate(particle)
+                        #print new_cell_id
                     # Record to map
                     new_cell_map[cwp.index()].append((new_cell_id, i))
 
@@ -298,6 +372,7 @@ class LagrangianParticles:
         if isinstance(particle, Particle):
             # Convert particle to point
             point = df.Point(*particle.position)
+            #print self.tree.compute_first_entity_collision(point)
             return self.tree.compute_first_entity_collision(point)
         else:
             return self.locate(Particle(particle))
@@ -342,10 +417,11 @@ class LagrangianParticles:
                     ax.scatter(xy[::skip, 0], xy[::skip, 1],
                                label='%d' % proc,
                                c=scalarMap.to_rgba(proc),
-                               edgecolor='none')
+                               edgecolor='none', s=0.4)
             ax.legend(loc='best')
             ax.axis([0, 1, 0, 1])
-
+    
+    
     def bar(self, fig):
         'Bar plot of particle distribution.'
         ax = fig.gca()
@@ -364,5 +440,16 @@ class LagrangianParticles:
             return np.sum(all_particles)
         else:
             return None
+        
+    def update_density(self, step):
+        new_rho = df.Function(self.DG0)
+        dofmap = new_rho.function_space().dofmap().dofs()
+        for cell_id,cwp in self.particle_map.iteritems():
+            new_rho.vector()[dofmap[cell_id]] = cwp.mean_concentration()
+        
+        self.rho.assign(new_rho)
+        if step == 0:
+            self.maxrho = max(self.rho.vector().array())
+        self.rho.vector()[:] = self.rho.vector().array()/self.maxrho
 
 

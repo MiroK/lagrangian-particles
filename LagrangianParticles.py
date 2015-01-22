@@ -134,7 +134,8 @@ class LagrangianParticles:
         self.maxrho = 1.0
         self.dt = 0.001
         self.h = 0.01
-        self.K = 0.01  # Diffusivity
+        self.K_randwalk = 0.01  # Diffusivity
+        self.K_particle = 0.01
 
         # Allocate some variables used to look up the velocity
         # Velocity is computed as U_i*basis_i where i is the dimension of
@@ -243,19 +244,19 @@ class LagrangianParticles:
                                                 cwp.orientation())
                 
                 var = 1./3
+                
+                # Generating random Gaussian distribution for diffusion
                 R1 = random.gauss(0,var)
                 R2 = random.gauss(0,var)
-                #print R
-                #import time
-                #time.sleep(1)
-                x[:] = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:] + [R1*np.sqrt(2*self.K*dt/var), R2*np.sqrt(2*self.K*dt/var)]
+                R = [R1, R2]
                 
-                #c_old = particle.properties["c"]
-                #print "%s , in cell %g " % (c_old, cwp.index())
-                #particle.properties["c"] = self.diffuse(particle, c_old, self.rho, self.dt, self.h)
+                x_new = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:] + np.dot(R,np.sqrt(2*self.K_randwalk*dt/var))
+                x[:] = x_new[:]
+                
+                c_old = particle.properties["c"]
+                particle.properties["c"] = self.diffuse(particle, c_old, self.rho, self.dt, self.h)
 
-            
-                
+           
             num_particles.append(len(cwp))
         #print "Min number of particles per cell: ", min(num_particles)
         print "Max number of particles per cell: ", max(num_particles)
@@ -282,8 +283,9 @@ class LagrangianParticles:
         #    zm = x[2] - h
         #    zp = x[2] + h
             
-        rho_x = rho_(*x)
+        
         try:
+            rho_x = rho_(*x)
             rho_xm = rho_(xm, x[1])
             rho_xp = rho_(xp, x[1])
             rho_ym = rho_(x[0], ym)
@@ -292,8 +294,8 @@ class LagrangianParticles:
             return c_
         #print rho_xm 
         #print mu*dt/h**2
-        c = c_ + mu*dt/h**2*(rho_xm - 2*rho_x + rho_xp + rho_ym - 2*rho_x + rho_yp)
-        print "%g + %g*(%g - 2*%g + %g + %g - 2*%g + %g)" % (c_, mu*dt/h**2, rho_xm, rho_x, rho_xp, rho_ym, rho_x, rho_yp)
+        c = c_ + self.K_particle*dt/h**2*(rho_xm - 2*rho_x + rho_xp + rho_ym - 2*rho_x + rho_yp)
+        #print "%g + %g*(%g - 2*%g + %g + %g - 2*%g + %g)" % (c_, mu*dt/h**2, rho_xm, rho_x, rho_xp, rho_ym, rho_x, rho_yp)
         return c
 
     def relocate(self):
@@ -451,5 +453,7 @@ class LagrangianParticles:
         if step == 0:
             self.maxrho = max(self.rho.vector().array())
         self.rho.vector()[:] = self.rho.vector().array()/self.maxrho
+        
+        return self.rho
 
 

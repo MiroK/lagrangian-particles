@@ -7,8 +7,8 @@ import numpy as np
 
 comm = pyMPI.COMM_WORLD
 
-mesh = RectangleMesh(0, 0, 1, 1,50,50)
-mesh = Mesh("squre.xml")
+mesh = UnitSquareMesh(50,50)
+#mesh = Mesh("squre.xml")
 
 def rectangle(x0,x1,y0,y1,Nx,Ny):
     lst = list()
@@ -20,17 +20,19 @@ def rectangle(x0,x1,y0,y1,Nx,Ny):
     return lst
   
 
-particle_positions = rectangle(0.45,0.55,0,0.1,10,10)
+particle_positions = rectangle(0.45,0.55,0,0.1,20,20)
 
 #particle_positions = RandomCircle([0.5, 0], 0.05).generate([100, 100])
 
 V = VectorFunctionSpace(mesh, 'CG', 1)
-#u = interpolate(Expression(("-2*sin(pi*x[1])*cos(pi*x[1])*pow(sin(pi*x[0]),2)",
-#                            "2*sin(pi*x[0])*cos(pi*x[0])*pow(sin(pi*x[1]),2)")),
-#                V)
+u = interpolate(Expression(("-2*sin(pi*x[1])*cos(pi*x[1])*pow(sin(pi*x[0]),2)",
+                            "2*sin(pi*x[0])*cos(pi*x[0])*pow(sin(pi*x[1]),2)")),
+                V)
 
-u_exp = Expression(("sin(2*pi*t)","0.0"), t=0.0)
-u = interpolate(u_exp,V)
+#u_exp = Expression(("1.0","0.0"), t=0.0)
+#u = interpolate(u_exp,V)
+u_p = interpolate(u,V)
+u_pp = interpolate(u,V)
 
 #u = interpolate(Expression(("(x[0] - 0.5)", "0.0")), V)
 #u = Constant((1.0, 0.0))
@@ -58,7 +60,7 @@ phi = TrialFunction(CG1)
 phi_v = TestFunction(CG1)
 phi_ = Function(CG1) # prev timestep
 
-dt = 0.01
+dt = 0.005
 
 #rhofile = File("results/rhofile.pvd")
 
@@ -66,11 +68,12 @@ for step in range(500):
     #print "Step: ",step
     #import time
     #time.sleep(1)
+    print step
     
-    u_exp.t = dt*step
-    u = interpolate(u_exp,V)
+    #u_exp.t = dt/2.*step
+    #u.assign(interpolate(u_exp,V))
     
-    lp.step(u, dt=dt)
+    lp.step(u,u_p,u_pp,dt=dt)
     fig.clf()
     lp.scatter(fig)
     fig.suptitle('At step %d' % step)
@@ -78,4 +81,7 @@ for step in range(500):
     rho.assign(lp.update_density(step))
     
     plot(lp.rho)
+    u_pp.assign(u_p)
+    u_p.assign(u)
+    plot(u_p)
     #plot(rho_CG1)

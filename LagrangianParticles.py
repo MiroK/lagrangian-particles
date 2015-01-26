@@ -134,8 +134,8 @@ class LagrangianParticles:
         self.maxrho = 1.0
         self.dt = 0.001
         self.h = 0.01
-        self.K_randwalk = 0.01  # Diffusivity
-        self.K_particle = 0.01
+        self.K_randwalk = 0  # Diffusivity
+        self.K_particle = 0
 
         # Allocate some variables used to look up the velocity
         # Velocity is computed as U_i*basis_i where i is the dimension of
@@ -153,8 +153,19 @@ class LagrangianParticles:
             self.num_tensor_entries *= self.element.value_dimension(i)
         # For VectorFunctionSpace CG1 this is 3
         self.coefficients = np.zeros(self.element.space_dimension())
+        self.coefficients_p = np.zeros(self.element.space_dimension())
+        self.coefficients_pp = np.zeros(self.element.space_dimension())
         # For VectorFunctionSpace CG1 this is 3x3
         self.basis_matrix = np.zeros((self.element.space_dimension(),
+                                      self.num_tensor_entries))
+        self.basis_matrix_p_k1 = np.zeros((self.element.space_dimension(),
+                                      self.num_tensor_entries))
+        self.basis_matrix_p_k2 = np.zeros((self.element.space_dimension(),
+                                      self.num_tensor_entries))
+        
+        self.basis_matrix_k3 = np.zeros((self.element.space_dimension(),
+                                      self.num_tensor_entries))
+        self.basis_matrix_pp = np.zeros((self.element.space_dimension(),
                                       self.num_tensor_entries))
         
 
@@ -223,11 +234,11 @@ class LagrangianParticles:
                 n_duplicit = len(np.where(all_found > 1)[0])
                 print 'There are %d duplicit particles' % n_duplicit
 
-    def step(self, u, dt):
-        'Move particles by forward Euler x += u*dt'
-        
+    def step(self, u,u_p,u_pp,dt):
+        'Move particles by RK4'
         start = time.time()
         num_particles = []
+        
         for cwp in self.particle_map.itervalues():
             # Restrict once per cell
             u.restrict(self.coefficients,
@@ -235,31 +246,62 @@ class LagrangianParticles:
                        cwp,
                        cwp.get_vertex_coordinates(),
                        self.ufc_cell)
+            u_p.restrict(self.coefficients_p,
+                       self.element,
+                       cwp,
+                       cwp.get_vertex_coordinates(),
+                       self.ufc_cell)
+            u_pp.restrict(self.coefficients_pp,
+                       self.element,
+                       cwp,
+                       cwp.get_vertex_coordinates(),
+                       self.ufc_cell)
             for particle in cwp.particles:
                 x = particle.position
-                # Compute velocity at position x
-                self.element.evaluate_basis_all(self.basis_matrix,
+
+                # Compute velocity(time=t) at position x
+                self.element.evaluate_basis_all(self.basis_matrix_pp,
                                                 x,
                                                 cwp.get_vertex_coordinates(),
                                                 cwp.orientation())
                 
-                var = 1./3
+                k1 = np.dot(self.coefficients_pp, self.basis_matrix_pp)[:]
                 
-                # Generating random Gaussian distribution for diffusion
-                R1 = random.gauss(0,var)
-                R2 = random.gauss(0,var)
-                R = [R1, R2]
+                # Compute velocity(time=t+h/2) at position x + 0.5*k1*dt
+                self.element.evaluate_basis_all(self.basis_matrix_p_k1,
+                                                x[:] + 0.5*dt*k1[:],
+                                                cwp.get_vertex_coordinates(),
+                                                cwp.orientation())
                 
-                x_new = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:] + np.dot(R,np.sqrt(2*self.K_randwalk*dt/var))
-                x[:] = x_new[:]
+                k2 = np.dot(self.coefficients_p, self.basis_matrix_p_k1)[:]
                 
+                # Compute velocity(time=t+dt/2) at position x + 0.5*k2*dt
+                self.element.evaluate_basis_all(self.basis_matrix_p_k2,
+                                                x[:] + 0.5*dt*k2[:],
+                                                cwp.get_vertex_coordinates(),
+                                                cwp.orientation())
+                
+                k3 = np.dot(self.coefficients_p, self.basis_matrix_p_k2)[:]
+                
+                # Compute velocity(time=t+dt/2) at position x + k3*dt
+                self.element.evaluate_basis_all(self.basis_matrix_k3,
+                                                x[:] + dt*k3[:],
+                                                cwp.get_vertex_coordinates(),
+                                                cwp.orientation())
+                
+                k4 = np.dot(self.coefficients, self.basis_matrix_k3)[:]
+                
+                
+                print k1
+                x[:] = x[:] + dt/6.*(k1[:] + 2*k2[:] + 2*k3[:] + k4[:])
+                #x[:] = x[:] + dt*np.dot(self.coefficients_pp, self.basis_matrix_pp)[:]
                 c_old = particle.properties["c"]
-                particle.properties["c"] = self.diffuse(particle, c_old, self.rho, self.dt, self.h)
+                #particle.properties["c"] = self.diffuse(particle, c_old, self.rho, self.dt, self.h)
 
            
             num_particles.append(len(cwp))
         #print "Min number of particles per cell: ", min(num_particles)
-        print "Max number of particles per cell: ", max(num_particles)
+        #print "Max number of particles per cell: ", max(num_particles)
         #print "Averager number of particles per cell: ", np.average(num_particles)
         
                 

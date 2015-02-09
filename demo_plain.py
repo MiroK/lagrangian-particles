@@ -83,5 +83,5 @@ for step in range(500):
     plot(lp.rho)
     u_pp.assign(u_p)
     u_p.assign(u)
-    plot(u_p)
+    #plot(u)
     #plot(rho_CG1)

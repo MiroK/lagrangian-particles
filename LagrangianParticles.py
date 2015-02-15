@@ -79,6 +79,139 @@ class CellWithParticles(df.Cell):
             for particle in self.particles:
                 c += particle.properties["c"]
             return c/self.volume()
+        
+class ParticleSource():
+    '''
+    Fills all cells withing a domain up with particles such that the density is constant over the area.
+    If N particles leave one cell, we place N particles on a random position in the cell, so the density remains constant.
+    The number of particles we wish to have in one cell depends on its volume. The number of cells is computed with the formula:
+    number of particles = mean density * cell.volume()
+    '''
+    def __init__(self, particles_per_cell, subdomain, mesh, lp):
+        self.lp = lp
+        self.particles_per_cell = particles_per_cell
+        self.subdomain = subdomain
+        self.mesh = mesh
+        self.cells = self.find_cell_ids()
+        if len(self.cells) > 0: 
+            self.mean_volume = self.find_mean_volume()
+        else:
+            self.mean_volume = 0.0
+        
+        
+        
+    def find_cell_ids(self):
+        '''return list of cell ids of all cells within the domain'''
+        mf = df.MeshFunction("size_t", self.mesh, self.mesh.topology().dim())
+        mf.set_all(0)
+        self.subdomain.mark(mf, 1)
+        marked_cells = df.SubsetIterator(mf, 1)
+        cells = []
+        for cell in marked_cells:   
+            cells.append(cell.index())
+            
+        # df.plot(mf, interactive=True)
+                
+        return cells
+    
+    def find_mean_volume(self):
+        '''
+        returns the mean volume over the entire domain
+        '''
+        vol = []
+        #print len(self.cells)
+        for cell in self.cells:
+            dolfin_cell = df.Cell(self.mesh, cell)
+            vol.append(dolfin_cell.volume())
+            
+        return np.mean(vol)
+    
+    def pick_point(self, cell_id, dim):
+        '''
+        Picks random point inside a triangle or tetrahetron.
+        Tetrahetron picking is based on the paper http://vcg.isti.cnr.it/publications/papers/rndtetra_a.pdf.
+        Triangle picking is trivial.
+        '''
+        #df.plot(global_mesh, interactive=True)
+        cell = df.Cell(self.mesh, cell_id)
+        vertices = cell.get_vertex_coordinates()
+        if dim == 2:
+            v0 = [vertices[0], vertices[1]]
+            v1 = [vertices[2], vertices[3]]
+            v2 = [vertices[4], vertices[5]]
+        elif dim == 3:
+            v0 = [vertices[0], vertices[1], vertices[2]]
+            v1 = [vertices[3], vertices[4], vertices[5]]
+            v2 = [vertices[6], vertices[7], vertices[8]]
+            v3 = [vertices[9], verticess[10], vertices[11]]
+        
+        if dim == 3:
+            s = random.random()
+            t = random.random()
+            u = random.random()
+            
+            # Fold cube into prism
+            if (s + t > 1.0):
+                s = 1. - s
+                t = 1. - t
+            
+            # Fold prism into tetrahetron
+            if (t + u > 1.0):
+                tmp = u
+                u = 1. - s - t
+                t = 1. - tmp
+                
+                
+            elif (s + t + u > 1.0):
+                tmp = u
+                u = s + t + u - 1.0
+                s = 1. - t - tmp
+            
+            a = 1. - s - t - u
+            return v0*a + v1*s + v2*t + v3*u
+        elif dim == 2:
+            b0 = random.uniform(0,1)
+            b1 = ( 1.0 - b0 ) * random.uniform(0,1);
+            b2 = 1.0 - b0 - b1;
+
+            point = np.array(v0) * b0 + np.array(v1) * b1 + np.array(v2) * b2;
+            #print cell.contains(df.Point(point[0], point[1]))
+            return [point[0],point[1]]
+                
+    
+    def select_random_points(self, cell_id, num):
+        points = []
+        for i in range(num):
+            #print i
+            rand_point = self.pick_point(cell_id, self.mesh.topology().dim())
+            points += [rand_point]
+        
+        #print "len points:",len(points)
+        return points
+        
+        
+    def apply_source(self):
+        particles_to_be_added = []
+        num_cells = len(self.cells)
+        
+        if num_cells > 0:
+            mean_density = self.particles_per_cell/self.mean_volume
+        else:
+            mean_density = 0.0
+        
+        for index, cell_id in enumerate(self.cells):
+            if cell_id in self.lp.particle_map.keys():
+                cwp = self.lp.particle_map[cell_id]
+                if len(cwp) < self.particles_per_cell:
+                    particles_to_be_added += self.select_random_points(cell_id, int(round(cwp.volume()*mean_density)) - len(cwp))
+                    
+            else:
+                cell = df.Cell(self.mesh, cell_id)
+                particles_to_be_added += self.select_random_points(cell_id, int(round(cell.volume()*mean_density)))
+                print "%g/%g" % (index, num_cells)
+            
+        particles_to_be_added = comm.allreduce(particles_to_be_added)
+        self.lp.add_particles(np.array(particles_to_be_added))
 
 
 class CellParticleMap(dict):
@@ -234,11 +367,9 @@ class LagrangianParticles:
                 n_duplicit = len(np.where(all_found > 1)[0])
                 print 'There are %d duplicit particles' % n_duplicit
 
-    def step(self, u,u_p,u_pp,dt):
-        'Move particles by RK4'
+    def step(self, u, dt):
+        'Move particles by forward Euler x += u*dt'
         start = time.time()
-        num_particles = []
-        
         for cwp in self.particle_map.itervalues():
             # Restrict once per cell
             u.restrict(self.coefficients,
@@ -246,73 +377,20 @@ class LagrangianParticles:
                        cwp,
                        cwp.get_vertex_coordinates(),
                        self.ufc_cell)
-            u_p.restrict(self.coefficients_p,
-                       self.element,
-                       cwp,
-                       cwp.get_vertex_coordinates(),
-                       self.ufc_cell)
-            u_pp.restrict(self.coefficients_pp,
-                       self.element,
-                       cwp,
-                       cwp.get_vertex_coordinates(),
-                       self.ufc_cell)
             for particle in cwp.particles:
                 x = particle.position
-
-                # Compute velocity(time=t) at position x
-                self.element.evaluate_basis_all(self.basis_matrix_pp,
+                # Compute velocity at position x
+                self.element.evaluate_basis_all(self.basis_matrix,
                                                 x,
                                                 cwp.get_vertex_coordinates(),
                                                 cwp.orientation())
-                
-                k1 = np.dot(self.coefficients_pp, self.basis_matrix_pp)[:]
-                
-                # Compute velocity(time=t+h/2) at position x + 0.5*k1*dt
-                self.element.evaluate_basis_all(self.basis_matrix_p_k1,
-                                                x[:] + 0.5*dt*k1[:],
-                                                cwp.get_vertex_coordinates(),
-                                                cwp.orientation())
-                
-                k2 = np.dot(self.coefficients_p, self.basis_matrix_p_k1)[:]
-                
-                # Compute velocity(time=t+dt/2) at position x + 0.5*k2*dt
-                self.element.evaluate_basis_all(self.basis_matrix_p_k2,
-                                                x[:] + 0.5*dt*k2[:],
-                                                cwp.get_vertex_coordinates(),
-                                                cwp.orientation())
-                
-                k3 = np.dot(self.coefficients_p, self.basis_matrix_p_k2)[:]
-                
-                # Compute velocity(time=t+dt/2) at position x + k3*dt
-                self.element.evaluate_basis_all(self.basis_matrix_k3,
-                                                x[:] + dt*k3[:],
-                                                cwp.get_vertex_coordinates(),
-                                                cwp.orientation())
-                
-                k4 = np.dot(self.coefficients, self.basis_matrix_k3)[:]
-                
-                
-                print k1
-                x[:] = x[:] + dt/6.*(k1[:] + 2*k2[:] + 2*k3[:] + k4[:])
-                #x[:] = x[:] + dt*np.dot(self.coefficients_pp, self.basis_matrix_pp)[:]
-                c_old = particle.properties["c"]
-                #particle.properties["c"] = self.diffuse(particle, c_old, self.rho, self.dt, self.h)
-
-           
-            num_particles.append(len(cwp))
-        #print "Min number of particles per cell: ", min(num_particles)
-        #print "Max number of particles per cell: ", max(num_particles)
-        #print "Averager number of particles per cell: ", np.average(num_particles)
-        
-                
+                x[:] = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:]
         # Recompute the map
         stop_shift = time.time() - start
         start = time.time()
         info = self.relocate()
-        #print info
         stop_reloc = time.time() - start
         # We return computation time per process
-        #df.interactive()
         return (stop_shift, stop_reloc)
     
     def diffuse(self, particle, c_, rho_, dt, h, mu=1e-2):
@@ -485,17 +563,25 @@ class LagrangianParticles:
         else:
             return None
         
-    def update_density(self, step):
-        new_rho = df.Function(self.DG0)
-        dofmap = new_rho.function_space().dofmap().dofs()
-        for cell_id,cwp in self.particle_map.iteritems():
-            new_rho.vector()[dofmap[cell_id]] = cwp.mean_concentration()
-        
-        self.rho.assign(new_rho)
-        if step == 0:
-            self.maxrho = max(self.rho.vector().array())
-        self.rho.vector()[:] = self.rho.vector().array()/self.maxrho
-        
-        return self.rho
+    def particle_density(self, rho):
+        'Make rho represent particle density.'
+        assert rho.ufl_element().family() == 'Discontinuous Lagrange'
+        assert rho.ufl_element().degree() == 0
+        assert rho.ufl_element().value_shape() == ()
+
+        vec = rho.vector()
+        vec.zero()
+
+        dofmap = rho.function_space().dofmap()
+        first, last = dofmap.ownership_range()
+        values = np.zeros(last-first)
+
+        for cell_id, cwp in self.particle_map.iteritems():
+            dof = dofmap.cell_dofs(cell_id)[0]
+            if first <= first+dof < last:
+                values[dof] = len(cwp)/cwp.volume()
+
+        vec.set_local(values)
+        vec.apply('insert')
 
 

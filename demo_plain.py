@@ -1,87 +1,62 @@
-from LagrangianParticles import LagrangianParticles
+from LagrangianParticles import LagrangianParticles, ParticleSource
 from particle_generators import RandomCircle
 import matplotlib.pyplot as plt
-from dolfin import *
+from dolfin import VectorFunctionSpace, interpolate, RectangleMesh, Expression,\
+    plot, interactive, Function, FunctionSpace, CompiledSubDomain, Constant
 from mpi4py import MPI as pyMPI
-import numpy as np
 
 comm = pyMPI.COMM_WORLD
 
-mesh = UnitSquareMesh(50,50)
-#mesh = Mesh("squre.xml")
-
-def rectangle(x0,x1,y0,y1,Nx,Ny):
-    lst = list()
-    xs = np.linspace(x0,x1,Nx)
-    ys = np.linspace(y0,y1,Ny)
-    for y in ys:
-        lst += [np.array([x, y]) for x in xs]
-    
-    return lst
-  
-
-particle_positions = rectangle(0.45,0.55,0,0.1,20,20)
-
-#particle_positions = RandomCircle([0.5, 0], 0.05).generate([100, 100])
+mesh = RectangleMesh(0, 0, 1, 1, 50, 50)
+particle_positions = RandomCircle([0.5, 0.75], 0.15).generate([100, 100])
+#print particle_positions
+#print type(particle_positions)
 
 V = VectorFunctionSpace(mesh, 'CG', 1)
 u = interpolate(Expression(("-2*sin(pi*x[1])*cos(pi*x[1])*pow(sin(pi*x[0]),2)",
                             "2*sin(pi*x[0])*cos(pi*x[0])*pow(sin(pi*x[1]),2)")),
                 V)
+#u = Constant(1.0)
+S = FunctionSpace(mesh, 'DG', 0)
+rho = Function(S)
+c = Function(S)
 
-#u_exp = Expression(("1.0","0.0"), t=0.0)
-#u = interpolate(u_exp,V)
-u_p = interpolate(u,V)
-u_pp = interpolate(u,V)
-
-#u = interpolate(Expression(("(x[0] - 0.5)", "0.0")), V)
-#u = Constant((1.0, 0.0))
 lp = LagrangianParticles(V)
-lp.add_particles(particle_positions)
-lp.K_randwalk = 0
-lp.K_particle = 0
+#lp.add_particles(particle_positions)
+
+circ = CompiledSubDomain("(x[0]-0.5)*(x[0]-0.5) + (x[1]-0.75)*(x[1]-0.75) < 0.1*0.1")
+
+source = ParticleSource(30, circ, mesh, lp)
+source.apply_source()
+
 
 fig = plt.figure()
 lp.scatter(fig)
 fig.suptitle('Initial')
+fig.clf()
 
 if comm.Get_rank() == 0:
     fig.show()
 
 plt.ion()
 
-DG0 = FunctionSpace(mesh, "DG", 0)
-CG1 = FunctionSpace(mesh, "CG", 1)
-CG2 = FunctionSpace(mesh, "CG", 2)
-rho = Function(DG0)
-rho_CG1 = Function(CG1)
-rho_CG2 = Function(CG2)
-phi = TrialFunction(CG1)
-phi_v = TestFunction(CG1)
-phi_ = Function(CG1) # prev timestep
 
-dt = 0.005
+lp.particle_density(rho)
 
-#rhofile = File("results/rhofile.pvd")
 
-for step in range(500):
-    #print "Step: ",step
-    #import time
-    #time.sleep(1)
-    print step
-    
-    #u_exp.t = dt/2.*step
-    #u.assign(interpolate(u_exp,V))
-    
-    lp.step(u,u_p,u_pp,dt=dt)
-    fig.clf()
+plot(rho, title='0')
+
+dt = 0.01
+for step in range(100):
+    lp.step(u, dt=dt)
+
     lp.scatter(fig)
     fig.suptitle('At step %d' % step)
     fig.canvas.draw()
-    rho.assign(lp.update_density(step))
-    
-    plot(lp.rho)
-    u_pp.assign(u_p)
-    u_p.assign(u)
-    #plot(u)
-    #plot(rho_CG1)
+    fig.clf()
+    source.apply_source()
+
+    lp.particle_density(rho)
+    plot(rho, title='%d' % step)
+
+interactive()

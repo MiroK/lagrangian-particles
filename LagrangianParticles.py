@@ -369,6 +369,7 @@ class LagrangianParticles:
     def step(self, u, dt):
         'Move particles by forward Euler x += u*dt'
         start = time.time()
+	
         for cwp in self.particle_map.itervalues():
             # Restrict once per cell
             u.restrict(self.coefficients,
@@ -444,6 +445,7 @@ class LagrangianParticles:
                         #print new_cell_id
                     # Record to map
                     new_cell_map[cwp.index()].append((new_cell_id, i))
+	
 
         # Rebuild locally the particles that end up on the process. Some
         # have cell_id == -1, i.e. they are on other process
@@ -460,16 +462,17 @@ class LagrangianParticles:
                     list_of_escaped_particles.append(particle)
                 else:
                     p_map += self.mesh, new_cell_id, particle
+	
 
         # Create a list of how many particles escapes from each processor
         self.my_escaped_particles[0] = len(list_of_escaped_particles)
         # Make all processes aware of the number of escapees
         comm.Allgather(self.my_escaped_particles, self.tot_escaped_particles)
-
-        # Send particles to root
-        for particle in list_of_escaped_particles:
-            particle.send(0)
-
+	
+        if comm.Get_rank() is not 0:
+            for particle in list_of_escaped_particles:
+                particle.send(0)
+	
         # Receive the particles escaping from other processors
         if self.myrank == 0:
             for proc in self.other_processes:
@@ -538,7 +541,7 @@ class LagrangianParticles:
                     ax.scatter(xy[::skip, 0], xy[::skip, 1],
                                label='%d' % proc,
                                c=scalarMap.to_rgba(proc),
-                               edgecolor='none', s=0.4)
+                               edgecolor='none', s=1.0)
             ax.legend(loc='best')
             ax.axis([0, 1, 0, 1])
     

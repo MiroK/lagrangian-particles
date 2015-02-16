@@ -26,7 +26,7 @@ lp = LagrangianParticles(V)
 
 circ = CompiledSubDomain("(x[0]-0.5)*(x[0]-0.5) + (x[1]-0.75)*(x[1]-0.75) < 0.1*0.1")
 
-source = ParticleSource(30, circ, mesh, lp)
+source = ParticleSource(100, circ, mesh, lp)
 source.apply_source()
 
 
@@ -42,18 +42,16 @@ plt.ion()
 
 
 lp.particle_density(rho)
-
-
 #plot(rho, title='0')
 
 dt = 0.01
 for step in range(100):
     lp.step(u, dt=dt)
-
-    lp.scatter(fig)
-    fig.suptitle('At step %d' % step)
-    fig.canvas.draw()
-    fig.clf()
+    if step % 10 == 0:
+    	lp.scatter(fig)
+        fig.suptitle('At step %d' % step)
+        fig.canvas.draw()
+        fig.clf()
     source.apply_source()
 
     lp.particle_density(rho)

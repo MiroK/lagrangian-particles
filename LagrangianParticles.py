@@ -36,6 +36,7 @@ class Particle:
         self.position = x
         self.properties = {}
         self.properties["c"] = c
+        
 
     def send(self, dest):
         'Send particle to dest.'
@@ -82,10 +83,10 @@ class CellWithParticles(df.Cell):
         
 class ParticleSource():
     '''
-    Fills all cells withing a domain up with particles such that the density is constant over the area.
+    Fills all cells within a domain up with particles such that the density is constant over the area.
     If N particles leave one cell, we place N particles on a random position in the cell, so the density remains constant.
-    The number of particles we wish to have in one cell depends on its volume. The number of cells is computed with the formula:
-    number of particles = mean density * cell.volume()
+    The number of particles we wish to have in one cell depends on its volume. The number of particles in each cell
+    is: mean density * cell.volume()
     '''
     def __init__(self, particles_per_cell, subdomain, mesh, lp):
         self.lp = lp
@@ -93,11 +94,12 @@ class ParticleSource():
         self.subdomain = subdomain
         self.mesh = mesh
         self.cells = self.find_cell_ids()
-        if len(self.cells) > 0: 
-            self.mean_volume = self.find_mean_volume()
-        else:
-            self.mean_volume = 0.0
-        
+        self.mean_volume = self.find_mean_volume()
+
+    def num_global_cells(self):
+        n = len(self.cells)
+        n = comm.allgather(n)
+        return sum(n)
         
         
     def find_cell_ids(self):
@@ -118,13 +120,27 @@ class ParticleSource():
         '''
         returns the mean volume over the entire domain
         '''
+        cells = self.cells
         vol = []
         #print len(self.cells)
-        for cell in self.cells:
+        for cell in cells:
             dolfin_cell = df.Cell(self.mesh, cell)
             vol.append(dolfin_cell.volume())
+        mean = np.mean(vol) if len(vol) > 0 else 0.0
+        mean = comm.allreduce(mean)
+        mean = np.mean(mean)
             
-        return np.mean(vol)
+        return mean
+
+    def particles_in_domain(self):
+        cells = self.cells
+        count = 0
+        for cell in cells:
+            if cell in self.lp.particle_map.keys():
+                count += len(self.lp.particle_map[cell])
+
+        count = comm.allgather(count)
+        return sum(count)
     
     def pick_point(self, cell_id, dim):
         '''
@@ -143,12 +159,12 @@ class ParticleSource():
             v0 = [vertices[0], vertices[1], vertices[2]]
             v1 = [vertices[3], vertices[4], vertices[5]]
             v2 = [vertices[6], vertices[7], vertices[8]]
-            v3 = [vertices[9], verticess[10], vertices[11]]
+            v3 = [vertices[9], vertices[10], vertices[11]]
         
         if dim == 3:
-            s = random.random()
-            t = random.random()
-            u = random.random()
+            s = random.uniform(0,1)
+            t = random.uniform(0,1)
+            u = random.uniform(0,1)
             
             # Fold cube into prism
             if (s + t > 1.0):
@@ -168,7 +184,9 @@ class ParticleSource():
                 s = 1. - t - tmp
             
             a = 1. - s - t - u
-            return v0*a + v1*s + v2*t + v3*u
+            point = np.array(v0)*a + np.array(v1)*s + np.array(v2)*t + np.array(v3)*u
+
+	    return [point[0], point[1], point[2]]
         elif dim == 2:
             b0 = random.uniform(0,1)
             b1 = ( 1.0 - b0 ) * random.uniform(0,1);
@@ -176,7 +194,7 @@ class ParticleSource():
 
             point = np.array(v0) * b0 + np.array(v1) * b1 + np.array(v2) * b2;
             #print cell.contains(df.Point(point[0], point[1]))
-            return [point[0],point[1]]
+            return [point[0], point[1]]
                 
     
     def select_random_points(self, cell_id, num):
@@ -191,6 +209,7 @@ class ParticleSource():
         
         
     def apply_source(self):
+        
         particles_to_be_added = []
         num_cells = len(self.cells)
         
@@ -199,7 +218,13 @@ class ParticleSource():
         else:
             mean_density = 0.0
         
-        for index, cell_id in enumerate(self.cells):
+        if self.particles_in_domain() > self.num_global_cells()*self.particles_per_cell:
+            cells = []
+
+        else:
+            cells = self.cells
+
+        for index, cell_id in enumerate(cells):
             if cell_id in self.lp.particle_map.keys():
                 cwp = self.lp.particle_map[cell_id]
                 if len(cwp) < self.particles_per_cell:
@@ -268,6 +293,7 @@ class LagrangianParticles:
         self.h = 0.01
         self.K_randwalk = 0  # Diffusivity
         self.K_particle = 0
+        self.characteristic_density = None
 
         # Allocate some variables used to look up the velocity
         # Velocity is computed as U_i*basis_i where i is the dimension of
@@ -565,7 +591,7 @@ class LagrangianParticles:
         else:
             return None
         
-    def particle_density(self, rho):
+    def particle_density(self, rho, normalize=0.0):
         'Make rho represent particle density.'
         assert rho.ufl_element().family() == 'Discontinuous Lagrange'
         assert rho.ufl_element().degree() == 0
@@ -581,9 +607,10 @@ class LagrangianParticles:
         for cell_id, cwp in self.particle_map.iteritems():
             dof = dofmap.cell_dofs(cell_id)[0]
             if first <= first+dof < last:
-                values[dof] = len(cwp)/cwp.volume()
+                values[dof] = len(cwp)/cwp.volume()  # Particles per cm**3
 
         vec.set_local(values)
         vec.apply('insert')
+
 
 

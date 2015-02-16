@@ -89,6 +89,18 @@ class RandomCircle(RandomGenerator):
                                                 (x[1]-center[1])**2) < radius
                                  )
 
+class RandomSphere(RandomGenerator):
+    def __init__(self, center, radius):
+        assert radius > 0
+        domain = [[center[0]-radius, center[0]+radius],
+                  [center[1]-radius, center[1]+radius],
+		  [center[2]-radius, center[2]+radius]]
+        RandomGenerator.__init__(self, domain,
+                                 lambda x: sqrt((x[0]-center[0])**2 +
+                                                (x[1]-center[1])**2 +
+						(x[2]-center[2])**2) < radius**2
+                                 )
+
 # -----------------------------------------------------------------------------
 
 if __name__ == '__main__':

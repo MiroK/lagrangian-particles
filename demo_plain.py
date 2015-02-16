@@ -44,7 +44,7 @@ plt.ion()
 lp.particle_density(rho)
 
 
-plot(rho, title='0')
+#plot(rho, title='0')
 
 dt = 0.01
 for step in range(100):
@@ -57,6 +57,6 @@ for step in range(100):
     source.apply_source()
 
     lp.particle_density(rho)
-    plot(rho, title='%d' % step)
+    #plot(rho, title='%d' % step)
 
 interactive()

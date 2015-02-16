@@ -208,7 +208,6 @@ class ParticleSource():
             else:
                 cell = df.Cell(self.mesh, cell_id)
                 particles_to_be_added += self.select_random_points(cell_id, int(round(cell.volume()*mean_density)))
-                print "%g/%g" % (index, num_cells)
             
         particles_to_be_added = comm.allreduce(particles_to_be_added)
         self.lp.add_particles(np.array(particles_to_be_added))

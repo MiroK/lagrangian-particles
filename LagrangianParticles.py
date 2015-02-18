@@ -209,7 +209,9 @@ class ParticleSource():
         
         
     def apply_source(self):
-        
+        '''
+        adds particles to the cells that have less particles than it should.
+        '''
         particles_to_be_added = []
         num_cells = len(self.cells)
         
@@ -218,16 +220,12 @@ class ParticleSource():
         else:
             mean_density = 0.0
         
-        if self.particles_in_domain() > self.num_global_cells()*self.particles_per_cell:
-            cells = []
-
-        else:
-            cells = self.cells
+        cells = self.cells
 
         for index, cell_id in enumerate(cells):
             if cell_id in self.lp.particle_map.keys():
                 cwp = self.lp.particle_map[cell_id]
-                if len(cwp) < self.particles_per_cell:
+                if len(cwp) < int(round(cwp.volume()*mean_density)):
                     particles_to_be_added += self.select_random_points(cell_id, int(round(cwp.volume()*mean_density)) - len(cwp))
                     
             else:
@@ -236,6 +234,7 @@ class ParticleSource():
             
         particles_to_be_added = comm.allreduce(particles_to_be_added)
         self.lp.add_particles(np.array(particles_to_be_added))
+
 
 
 class CellParticleMap(dict):
@@ -607,7 +606,7 @@ class LagrangianParticles:
         for cell_id, cwp in self.particle_map.iteritems():
             dof = dofmap.cell_dofs(cell_id)[0]
             if first <= first+dof < last:
-                values[dof] = len(cwp)/cwp.volume()  # Particles per cm**3
+                values[dof] = len(cwp)/cwp.volume()
 
         vec.set_local(values)
         vec.apply('insert')

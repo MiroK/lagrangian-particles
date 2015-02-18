@@ -18,6 +18,8 @@ import matplotlib.colors as colors
 import matplotlib.cm as cmx
 import time
 import random
+from particle_generators import RandomCircle, RandomSphere
+
 
 __DEBUG__ = False
 
@@ -88,13 +90,14 @@ class ParticleSource():
     The number of particles we wish to have in one cell depends on its volume. The number of particles in each cell
     is: mean density * cell.volume()
     '''
-    def __init__(self, particles_per_cell, subdomain, mesh, lp):
+    def __init__(self, particles_per_cell, subdomain, mesh, lp, random_generator=None):
         self.lp = lp
         self.particles_per_cell = particles_per_cell
         self.subdomain = subdomain
         self.mesh = mesh
         self.cells = self.find_cell_ids()
         self.mean_volume = self.find_mean_volume()
+        self.random_generator = random_generator
 
     def num_global_cells(self):
         n = len(self.cells)
@@ -210,7 +213,7 @@ class ParticleSource():
         
     def apply_source(self):
         '''
-        adds particles to the cells that have less particles than it should.
+        Adds particles to the cells that have less particles than it should.
         '''
         particles_to_be_added = []
         num_cells = len(self.cells)
@@ -234,6 +237,22 @@ class ParticleSource():
             
         particles_to_be_added = comm.allreduce(particles_to_be_added)
         self.lp.add_particles(np.array(particles_to_be_added))
+
+    def apply_source_all(self):
+        '''
+        Adds particles to the entire subdomain if there is less particles than it should have.
+        '''
+        num_particles = self.particles_in_domain()
+        num_cells = sum(comm.allgather(len(self.cells)))
+        if num_particles < self.particles_per_cell*num_cells:
+            n_to_be_added = self.particles_per_cell*num_cells - num_particles
+            N = np.zeros(self.mesh.topology().dim())
+            N[:] = np.power(n_to_be_added, 1./self.mesh.topology().dim())
+            particles_to_be_added = self.random_generator.generate(N)
+
+        particles_to_be_added = comm.bcast(particles_to_be_added)
+        self.lp.add_particles(particles_to_be_added)
+
 
 
 

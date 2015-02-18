@@ -26,8 +26,8 @@ lp = LagrangianParticles(V)
 
 circ = CompiledSubDomain("(x[0]-0.5)*(x[0]-0.5) + (x[1]-0.75)*(x[1]-0.75) < 0.1*0.1")
 
-source = ParticleSource(10, circ, mesh, lp)
-source.apply_source()
+source = ParticleSource(10, circ, mesh, lp, RandomCircle([0.5, 0.75], 0.1))
+source.apply_source_all()
 
 
 fig = plt.figure()
@@ -42,7 +42,7 @@ plt.ion()
 
 
 lp.particle_density(rho, 0)
-plot(rho, title='0')
+#plot(rho, title='0')
 
 dt = 0.01
 for step in range(100):
@@ -51,9 +51,9 @@ for step in range(100):
     fig.suptitle('At step %d' % step)     
     fig.canvas.draw()
     fig.clf()
-    source.apply_source()
+    source.apply_source_all()
 
     lp.particle_density(rho, step)
-    plot(rho, title='%d' % step)
+    #plot(rho, title='%d' % step)
 
 interactive()

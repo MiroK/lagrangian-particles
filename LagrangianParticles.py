@@ -18,8 +18,6 @@ import matplotlib.colors as colors
 import matplotlib.cm as cmx
 import time
 
-__DEBUG__ = False
-
 # Disable printing
 __DEBUG__ = False
 
@@ -272,8 +270,9 @@ class LagrangianParticles:
         comm.Allgather(self.my_escaped_particles, self.tot_escaped_particles)
 
         # Send particles to root
-        for particle in list_of_escaped_particles:
-            particle.send(0)
+        if self.myrank != 0:
+            for particle in list_of_escaped_particles:
+                particle.send(0)
 
         # Receive the particles escaping from other processors
         if self.myrank == 0:

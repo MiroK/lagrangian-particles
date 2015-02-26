@@ -1,5 +1,5 @@
 import numpy as np
-from math import pi, sqrt
+from math import pi, sqrt, pow
 from itertools import product
 from mpi4py import MPI as pyMPI
 
@@ -19,7 +19,7 @@ def circle(center, radius, N, fill=0):
         return [np.array([x, y]) for x, y, in zip(xs, ys)]
     else:
         return sum((circle(center, r, N, fill=0)
-                    for r in np.linspace(0.1, radius, fill)), [])
+                    for r in np.linspace(0.01, radius, fill)), [])
 
 
 class RandomGenerator(object):
@@ -41,7 +41,7 @@ class RandomGenerator(object):
     def generate(self, N, method='full'):
         'Genererate points.'
         assert len(N) == self.dim
-        assert method in ['full', 'tensor']
+        assert method in ['full', 'tensor', 'uniform']
 
         if self.rank == 0:
             # Generate random points for all coordinates
@@ -51,7 +51,7 @@ class RandomGenerator(object):
                 for i, (a, b) in enumerate(self.domain):
                     points[:, i] = a + points[:, i]*(b-a)
             # Create points by tensor product of intervals
-            else:
+            elif method == 'tensor':
                 # Values from [0, 1) used to create points between
                 # a, b - boundary
                 # points in each of the directiosn
@@ -61,6 +61,21 @@ class RandomGenerator(object):
                             for i, (a, b) in enumerate(self.domain))
                 # Cartesian product of directions yield n-d points
                 points = (np.array(point) for point in product(*points_i))
+            else:
+                points = []
+                xs = np.linspace(self.domain[0][0], self.domain[0][1], N[0])
+                ys = np.linspace(self.domain[1][0], self.domain[1][1], N[1])
+                if self.dim == 3:
+                    zs = np.linspace(self.domain[2][0], self.domain[2][1], N[2])
+                
+                points = []
+                if self.dim == 2:
+                    for y in ys:
+                        points += [[x, y] for x in xs]
+                elif self.dim == 3:
+                    for z in zs:
+                        for y in ys:
+                            points += [[x, y, z] for x in xs]
 
 
             # Use rule to see which points are inside
@@ -94,11 +109,11 @@ class RandomSphere(RandomGenerator):
         assert radius > 0
         domain = [[center[0]-radius, center[0]+radius],
                   [center[1]-radius, center[1]+radius],
-		  [center[2]-radius, center[2]+radius]]
+		          [center[2]-radius, center[2]+radius]]
         RandomGenerator.__init__(self, domain,
                                  lambda x: sqrt((x[0]-center[0])**2 +
                                                 (x[1]-center[1])**2 +
-						(x[2]-center[2])**2) < radius**2
+						(x[2]-center[2])**2) < radius
                                  )
 
 # -----------------------------------------------------------------------------

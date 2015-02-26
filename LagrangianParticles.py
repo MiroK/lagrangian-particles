@@ -19,6 +19,7 @@ import matplotlib.cm as cmx
 import time
 import random
 from particle_generators import RandomCircle, RandomSphere
+from mpl_toolkits.mplot3d import Axes3D
 
 
 __DEBUG__ = False
@@ -201,6 +202,9 @@ class ParticleSource():
                 
     
     def select_random_points(self, cell_id, num):
+	'''
+	Selects random points for particles to be added
+	'''
         points = []
         for i in range(num):
             #print i
@@ -209,13 +213,25 @@ class ParticleSource():
         
         #print "len points:",len(points)
         return points
+    
+    def select_random_particles(self, cell_id, num):
+	'''
+	Selects random particles already existing
+	'''
+	all_particles = self.lp.particle_map[cell_id].particles
+	rand_particles = random.sample(range(len(all_particles)), num)
+	return rand_particles
+	
         
         
     def apply_source(self):
         '''
         Adds particles to the cells that have less particles than it should.
+	Removes particles if too many
         '''
-        particles_to_be_added = []
+        particles_to_be_added = list()
+	particles_to_be_removed = dict()
+	particles_to_be_removed_local = {}
         num_cells = len(self.cells)
         
         if num_cells > 0:
@@ -229,14 +245,25 @@ class ParticleSource():
             if cell_id in self.lp.particle_map.keys():
                 cwp = self.lp.particle_map[cell_id]
                 if len(cwp) < int(round(cwp.volume()*mean_density)):
+		    # Adds particles if too few
                     particles_to_be_added += self.select_random_points(cell_id, int(round(cwp.volume()*mean_density)) - len(cwp))
+		elif len(cwp) > int(round(cwp.volume()*mean_density)):
+		    # Removes particles if too many
+		    particles_to_be_removed_local.update(cell_id=self.select_random_particles(cell_id, len(cwp) - int(round(cwp.volume()*mean_density))))
                     
             else:
                 cell = df.Cell(self.mesh, cell_id)
                 particles_to_be_added += self.select_random_points(cell_id, int(round(cell.volume()*mean_density)))
-            
+        
+	# Must be same on all procecess    
         particles_to_be_added = comm.allreduce(particles_to_be_added)
+	
+	particles_to_be_removed_gather = comm.allgather(particles_to_be_removed_local)
+	for i, particles in enumerate(particles_to_be_removed_gather):
+	    particles_to_be_removed.update(particles)
+	
         self.lp.add_particles(np.array(particles_to_be_added))
+	self.lp.remove_particles(particles_to_be_removed)
 
     def apply_source_all(self):
         '''
@@ -244,13 +271,14 @@ class ParticleSource():
         '''
         num_particles = self.particles_in_domain()
         num_cells = sum(comm.allgather(len(self.cells)))
-        if num_particles < self.particles_per_cell*num_cells:
-            n_to_be_added = self.particles_per_cell*num_cells - num_particles
+       	if num_particles < self.particles_per_cell*num_cells:
+            n_to_be_added = (self.particles_per_cell*num_cells - num_particles) / (4./3 * np.pi * 0.5**3) 
             N = np.zeros(self.mesh.topology().dim())
             N[:] = np.power(n_to_be_added, 1./self.mesh.topology().dim())
-            particles_to_be_added = self.random_generator.generate(N)
-
-        particles_to_be_added = comm.bcast(particles_to_be_added)
+            particles_to_be_added = self.random_generator.generate(N, method="uniform") 
+        else:
+            particles_to_be_added = []
+	
         self.lp.add_particles(particles_to_be_added)
 
 
@@ -399,8 +427,8 @@ class LagrangianParticles:
             missing = np.where(all_found == 0)[0]
             n_missing = len(missing)
 
-            #assert n_missing == 0,\
-            #    '%d particles are not located in mesh' % n_missing
+            assert n_missing == 0,\
+                '%d particles are not located in mesh' % n_missing
 
             # Print particle info
             if self.__debug:
@@ -409,6 +437,15 @@ class LagrangianParticles:
 
                 n_duplicit = len(np.where(all_found > 1)[0])
                 print 'There are %d duplicit particles' % n_duplicit
+    
+    def remove_particles(self, list_of_particles):
+	'Remove particles from home processors'
+	pmap = self.particle_map
+	
+	for cell_id, particle in list_of_particles.iteritems():
+	    if cell_id in pmap.keys():
+		pmap.pop(cell_id, particle)
+	
 
     def step(self, u, dt):
         'Move particles by forward Euler x += u*dt'
@@ -437,30 +474,6 @@ class LagrangianParticles:
         # We return computation time per process
         return (stop_shift, stop_reloc)
     
-    def diffuse(self, particle, c_, rho_, dt, h, mu=1e-2):
-        x = particle.position
-        xm = x[0] - h
-        xp = x[0] + h
-        ym = x[1] - h
-        yp = x[1] + h
-        #if self.dim == 3:
-        #    zm = x[2] - h
-        #    zp = x[2] + h
-            
-        
-        try:
-            rho_x = rho_(*x)
-            rho_xm = rho_(xm, x[1])
-            rho_xp = rho_(xp, x[1])
-            rho_ym = rho_(x[0], ym)
-            rho_yp = rho_(x[0], yp)
-        except:
-            return c_
-        #print rho_xm 
-        #print mu*dt/h**2
-        c = c_ + self.K_particle*dt/h**2*(rho_xm - 2*rho_x + rho_xp + rho_ym - 2*rho_x + rho_yp)
-        #print "%g + %g*(%g - 2*%g + %g + %g - 2*%g + %g)" % (c_, mu*dt/h**2, rho_xm, rho_x, rho_xp, rho_ym, rho_x, rho_yp)
-        return c
 
     def relocate(self):
         # Relocate particles on cells and processors
@@ -545,9 +558,11 @@ class LagrangianParticles:
         else:
             return self.locate(Particle(particle))
 
-    def scatter(self, fig, skip=1):
+    def scatter(self, fig, dim=2, skip=1):
         'Scatter plot of all particles on process 0'
         ax = fig.gca()
+        if dim==3:
+            ax = fig.add_subplot(111, projection='3d')
 
         p_map = self.particle_map
         all_particles = np.zeros(self.num_processes, dtype='I')
@@ -581,13 +596,19 @@ class LagrangianParticles:
                 particles = received[proc]
                 if len(particles) > 0:
                     xy = np.array(particles)
+                    if dim == 2:
+                        ax.scatter(xy[::skip, 0], xy[::skip, 1],
+                                    label='%d' % proc,
+                                    c=scalarMap.to_rgba(proc),
+                                    edgecolor='none', s=1.0)
+                    elif dim == 3:
+                        ax.scatter(xy[::skip, 0], xy[::skip, 1],xy[::skip, 2],
+                                    label='%d' % proc,
+                                    c=scalarMap.to_rgba(proc),
+                                    edgecolor='none', s=2.0)
 
-                    ax.scatter(xy[::skip, 0], xy[::skip, 1],
-                               label='%d' % proc,
-                               c=scalarMap.to_rgba(proc),
-                               edgecolor='none', s=1.0)
             ax.legend(loc='best')
-            ax.axis([0, 1, 0, 1])
+            #ax.axis([0, 1, 0, 1])
     
     
     def bar(self, fig):

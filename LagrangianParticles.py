@@ -35,10 +35,10 @@ __UINT32_MAX__ = np.iinfo('uint32').max
 
 class Particle:
     'Lagrangian particle with position and some other passive properties.'
-    def __init__(self, x, c=1.0):
+    def __init__(self, x):
         self.position = x
         self.properties = {}
-        self.properties["c"] = c
+        self.properties["w"] = 1.0
         
 
     def send(self, dest):
@@ -74,15 +74,19 @@ class CellWithParticles(df.Cell):
         'Number of particles in cell.'
         return len(self.particles)
     
-    def mean_concentration(self):
+    def total_weight(self):
         if self.__len__ == 0:
             return 0
         
         else:
-            c = 0
+            w = 0
             for particle in self.particles:
-                c += particle.properties["c"]
-            return c/self.volume()
+                w += particle.properties["w"]
+            return w
+    
+    def set_weight(self, w):
+        for p in self.particles:
+            p.properties["w"] = w
         
 class ParticleSource():
     '''
@@ -91,14 +95,14 @@ class ParticleSource():
     The number of particles we wish to have in one cell depends on its volume. The number of particles in each cell
     is: mean density * cell.volume()
     '''
-    def __init__(self, particles_per_cell, subdomain, mesh, lp, random_generator=None):
+    def __init__(self, particles_per_cell, subdomain, mesh, lp, consentration_factor=lambda x: 1.0):
         self.lp = lp
         self.particles_per_cell = particles_per_cell
         self.subdomain = subdomain
         self.mesh = mesh
         self.cells = self.find_cell_ids()
         self.mean_volume = self.find_mean_volume()
-        self.random_generator = random_generator
+        self.concentration_factor = consentration_factor
 
     def num_global_cells(self):
         n = len(self.cells)
@@ -107,7 +111,7 @@ class ParticleSource():
         
         
     def find_cell_ids(self):
-        '''return list of cell ids of all cells within the domain'''
+        '''return list of cell ids of cells within the domain'''
         mf = df.MeshFunction("size_t", self.mesh, self.mesh.topology().dim())
         mf.set_all(0)
         self.subdomain.mark(mf, 1)
@@ -189,8 +193,7 @@ class ParticleSource():
             
             a = 1. - s - t - u
             point = np.array(v0)*a + np.array(v1)*s + np.array(v2)*t + np.array(v3)*u
-
-	    return [point[0], point[1], point[2]]
+            return [point[0], point[1], point[2]]
         elif dim == 2:
             b0 = random.uniform(0,1)
             b1 = ( 1.0 - b0 ) * random.uniform(0,1);
@@ -202,9 +205,9 @@ class ParticleSource():
                 
     
     def select_random_points(self, cell_id, num):
-	'''
-	Selects random points for particles to be added
-	'''
+        '''
+        Selects random points for particles to be added
+        '''
         points = []
         for i in range(num):
             #print i
@@ -215,23 +218,30 @@ class ParticleSource():
         return points
     
     def select_random_particles(self, cell_id, num):
-	'''
-	Selects random particles already existing
-	'''
-	all_particles = self.lp.particle_map[cell_id].particles
-	rand_particles = random.sample(range(len(all_particles)), num)
-	return rand_particles
-	
-        
+	    '''
+	    Selects random particles already existing
+	    '''
+	    all_particles = self.lp.particle_map[cell_id].particles
+	    rand_particles = random.sample(range(len(all_particles)), num)
+	    return rand_particles
+
+    def midpoint(self, cell_id):
+        cell = df.Cell(self.mesh, cell_id)
+        midpoint = cell.midpoint()
+        x = []
+        for i in range(self.mesh.topology().dim()):
+            x.append(midpoint[i])
+        return x
+
         
     def apply_source(self):
         '''
         Adds particles to the cells that have less particles than it should.
-	Removes particles if too many
+	    Removes particles if too many
         '''
         particles_to_be_added = list()
-	particles_to_be_removed = dict()
-	particles_to_be_removed_local = {}
+        particles_to_be_removed = dict()
+        particles_to_be_removed_local = {}
         num_cells = len(self.cells)
         
         if num_cells > 0:
@@ -244,26 +254,30 @@ class ParticleSource():
         for index, cell_id in enumerate(cells):
             if cell_id in self.lp.particle_map.keys():
                 cwp = self.lp.particle_map[cell_id]
-                if len(cwp) < int(round(cwp.volume()*mean_density)):
-		    # Adds particles if too few
-                    particles_to_be_added += self.select_random_points(cell_id, int(round(cwp.volume()*mean_density)) - len(cwp))
-		elif len(cwp) > int(round(cwp.volume()*mean_density)):
-		    # Removes particles if too many
-		    particles_to_be_removed_local.update(cell_id=self.select_random_particles(cell_id, len(cwp) - int(round(cwp.volume()*mean_density))))
+                midpoint = self.midpoint(cell_id)
+                num_particles = int(round(cwp.volume()*mean_density*self.concentration_factor(midpoint)))
+                if len(cwp) < num_particles:
+                    # Adds particles if too few
+                    particles_to_be_added += self.select_random_points(cell_id, num_particles - len(cwp))
+                elif len(cwp) > num_particles:
+		            # Removes particles if too many
+		            particles_to_be_removed_local.update(cell_id=self.select_random_particles(cell_id, len(cwp) - num_particles))
                     
             else:
+                midpoint = self.midpoint(cell_id)
                 cell = df.Cell(self.mesh, cell_id)
-                particles_to_be_added += self.select_random_points(cell_id, int(round(cell.volume()*mean_density)))
+                num_particles = int(round(cell.volume()*mean_density*self.concentration_factor(midpoint)))
+                particles_to_be_added += self.select_random_points(cell_id, num_particles)
         
-	# Must be same on all procecess    
+	    # Must be same on all procecess    
         particles_to_be_added = comm.allreduce(particles_to_be_added)
-	
-	particles_to_be_removed_gather = comm.allgather(particles_to_be_removed_local)
-	for i, particles in enumerate(particles_to_be_removed_gather):
-	    particles_to_be_removed.update(particles)
-	
+        particles_to_be_removed_gather = comm.allgather(particles_to_be_removed_local)
+	    
+        for i, particles in enumerate(particles_to_be_removed_gather):
+	        particles_to_be_removed.update(particles)
+        
         self.lp.add_particles(np.array(particles_to_be_added))
-	self.lp.remove_particles(particles_to_be_removed)
+        self.lp.remove_particles(particles_to_be_removed)
 
     def apply_source_all(self):
         '''
@@ -337,8 +351,6 @@ class LagrangianParticles:
         self.maxrho = 1.0
         self.dt = 0.001
         self.h = 0.01
-        self.K_randwalk = 0  # Diffusivity
-        self.K_particle = 0
         self.characteristic_density = None
 
         # Allocate some variables used to look up the velocity
@@ -427,8 +439,8 @@ class LagrangianParticles:
             missing = np.where(all_found == 0)[0]
             n_missing = len(missing)
 
-            assert n_missing == 0,\
-                '%d particles are not located in mesh' % n_missing
+            #assert n_missing == 0,\
+            #    '%d particles are not located in mesh' % n_missing
 
             # Print particle info
             if self.__debug:
@@ -466,6 +478,7 @@ class LagrangianParticles:
                                                 cwp.get_vertex_coordinates(),
                                                 cwp.orientation())
                 x[:] = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:]
+        
         # Recompute the map
         stop_shift = time.time() - start
         start = time.time()
@@ -473,6 +486,18 @@ class LagrangianParticles:
         stop_reloc = time.time() - start
         # We return computation time per process
         return (stop_shift, stop_reloc)
+
+    def weight(self):
+        num_particles = self.total_number_of_particles()
+
+        num_cells = len(self.particle_map)
+        num_cells = comm.allgather(num_cells)
+        num_cells = sum(num_cells)
+
+        if len(self.particle_map) > 0:
+            average_num_particles = num_particles[0]/float(num_cells)
+            for cwp in self.particle_map.itervalues():
+                cwp.set_weight(average_num_particles/(len(cwp)**0.8))
     
 
     def relocate(self):
@@ -639,6 +664,8 @@ class LagrangianParticles:
         vec = rho.vector()
         vec.zero()
 
+        self.weight()
+
         dofmap = rho.function_space().dofmap()
         first, last = dofmap.ownership_range()
         values = np.zeros(last-first)
@@ -646,7 +673,7 @@ class LagrangianParticles:
         for cell_id, cwp in self.particle_map.iteritems():
             dof = dofmap.cell_dofs(cell_id)[0]
             if first <= first+dof < last:
-                values[dof] = len(cwp)/cwp.volume()
+                values[dof] = cwp.total_weight()
 
         vec.set_local(values)
         vec.apply('insert')

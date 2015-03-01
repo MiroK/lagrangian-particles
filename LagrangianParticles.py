@@ -75,18 +75,34 @@ class CellWithParticles(df.Cell):
         return len(self.particles)
     
     def total_weight(self):
-        if self.__len__ == 0:
-            return 0
+        if len(self) == 0:
+            return 0.0
         
         else:
             w = 0
             for particle in self.particles:
                 w += particle.properties["w"]
+                #print particle.properties["w"]
             return w
+
+    def average_weight(self):
+        if len(self) == 0:
+            a = 0.0
+        else:
+            a = self.total_weight()/float(len(self))
+        return a
     
+    def set_concentration(self, concentration_factor):
+        for p in self.particles:
+            p.properties["w"] = concentration_factor(p.position)
+
     def set_weight(self, w):
         for p in self.particles:
             p.properties["w"] = w
+
+    def mult_weight(self, factor):
+        for p in self.particles:
+            p.properties["w"] = p.properties["w"]*factor
         
 class ParticleSource():
     '''
@@ -95,7 +111,7 @@ class ParticleSource():
     The number of particles we wish to have in one cell depends on its volume. The number of particles in each cell
     is: mean density * cell.volume()
     '''
-    def __init__(self, particles_per_cell, subdomain, mesh, lp, consentration_factor=lambda x: 1.0):
+    def __init__(self, particles_per_cell, subdomain, mesh, lp, consentration_factor=lambda x: 1.0, random_generator=None):
         self.lp = lp
         self.particles_per_cell = particles_per_cell
         self.subdomain = subdomain
@@ -103,6 +119,7 @@ class ParticleSource():
         self.cells = self.find_cell_ids()
         self.mean_volume = self.find_mean_volume()
         self.concentration_factor = consentration_factor
+        self.random_generator = random_generator
 
     def num_global_cells(self):
         n = len(self.cells)
@@ -240,8 +257,9 @@ class ParticleSource():
 	    Removes particles if too many
         '''
         particles_to_be_added = list()
-        particles_to_be_removed = dict()
-        particles_to_be_removed_local = {}
+        properties_d = dict(w=list())
+        #particles_to_be_removed = dict()
+        #particles_to_be_removed_local = {}
         num_cells = len(self.cells)
         
         if num_cells > 0:
@@ -255,45 +273,59 @@ class ParticleSource():
             if cell_id in self.lp.particle_map.keys():
                 cwp = self.lp.particle_map[cell_id]
                 midpoint = self.midpoint(cell_id)
-                num_particles = int(round(cwp.volume()*mean_density*self.concentration_factor(midpoint)))
+                num_particles = int(round(cwp.volume()*mean_density))
                 if len(cwp) < num_particles:
                     # Adds particles if too few
-                    particles_to_be_added += self.select_random_points(cell_id, num_particles - len(cwp))
-                elif len(cwp) > num_particles:
-		            # Removes particles if too many
-		            particles_to_be_removed_local.update(cell_id=self.select_random_particles(cell_id, len(cwp) - num_particles))
+                    random_particles = self.select_random_points(cell_id, num_particles - len(cwp))
+                    particles_to_be_added += random_particles
+                    for p in random_particles:
+                        properties_d["w"].append(self.concentration_factor(p))
+               # elif len(cwp) > num_particles:
+		       #     # Removes particles if too many
+		       #     particles_to_be_removed_local.update(cell_id=self.select_random_particles(cell_id, len(cwp) - num_particles))
                     
             else:
                 midpoint = self.midpoint(cell_id)
                 cell = df.Cell(self.mesh, cell_id)
-                num_particles = int(round(cell.volume()*mean_density*self.concentration_factor(midpoint)))
-                particles_to_be_added += self.select_random_points(cell_id, num_particles)
+                num_particles = int(round(cell.volume()*mean_density))
+                random_particles = self.select_random_points(cell_id, num_particles)
+                particles_to_be_added += random_particles
+                for p in random_particles:
+                        properties_d["w"].append(self.concentration_factor(p))
         
 	    # Must be same on all procecess    
         particles_to_be_added = comm.allreduce(particles_to_be_added)
-        particles_to_be_removed_gather = comm.allgather(particles_to_be_removed_local)
+        #particles_to_be_removed_gather = comm.allgather(particles_to_be_removed_local)
 	    
-        for i, particles in enumerate(particles_to_be_removed_gather):
-	        particles_to_be_removed.update(particles)
-        
-        self.lp.add_particles(np.array(particles_to_be_added))
-        self.lp.remove_particles(particles_to_be_removed)
+        #for i, particles in enumerate(particles_to_be_removed_gather):
+	    #    particles_to_be_removed.update(particles)
+        #print properties_d
+        self.lp.add_particles(np.array(particles_to_be_added), properties_d)
+        #self.lp.remove_particles(particles_to_be_removed)
 
-    def apply_source_all(self):
+    def apply_weight(self):
+        cells = self.cells
+        for index, cell_id in enumerate(cells):
+            if cell_id in self.lp.particle_map.keys():
+                cwp = self.lp.particle_map[cell_id]
+                midpoint = self.midpoint(cell_id)
+                cwp.set_concentration(self.concentration_factor)
+
+
+    def apply_source_all(self, n_to_be_added):
         '''
         Adds particles to the entire subdomain if there is less particles than it should have.
         '''
+        properties_d = dict(w=list())
         num_particles = self.particles_in_domain()
         num_cells = sum(comm.allgather(len(self.cells)))
-       	if num_particles < self.particles_per_cell*num_cells:
-            n_to_be_added = (self.particles_per_cell*num_cells - num_particles) / (4./3 * np.pi * 0.5**3) 
-            N = np.zeros(self.mesh.topology().dim())
-            N[:] = np.power(n_to_be_added, 1./self.mesh.topology().dim())
-            particles_to_be_added = self.random_generator.generate(N, method="uniform") 
-        else:
-            particles_to_be_added = []
-	
-        self.lp.add_particles(particles_to_be_added)
+        #n_to_be_added = (self.particles_per_cell*num_cells - num_particles) / (4./3 * np.pi * 0.5**3) 
+        N = np.zeros(self.mesh.topology().dim())
+        N[:] = np.power(n_to_be_added, 1./self.mesh.topology().dim())
+        particles_to_be_added = self.random_generator.generate(N, method="full") 
+        for p in particles_to_be_added:
+            properties_d["w"].append(self.concentration_factor(p))
+        self.lp.add_particles(particles_to_be_added, properties_d)
 
 
 
@@ -487,6 +519,17 @@ class LagrangianParticles:
         # We return computation time per process
         return (stop_shift, stop_reloc)
 
+    def average_weight(self):
+        w = 0.0
+        for cwp in self.particle_map.itervalues():
+            w += cwp.average_weight()
+        w = w/float(len(self.particle_map))
+
+        w = comm.allgather(w)
+        w = np.average(w)
+        return w
+
+
     def weight(self):
         num_particles = self.total_number_of_particles()
 
@@ -495,9 +538,8 @@ class LagrangianParticles:
         num_cells = sum(num_cells)
 
         if len(self.particle_map) > 0:
-            average_num_particles = num_particles[0]/float(num_cells)
             for cwp in self.particle_map.itervalues():
-                cwp.set_weight(average_num_particles/(len(cwp)**0.8))
+                cwp.set_weight(self.average_weight() / cwp.average_weight())
     
 
     def relocate(self):
@@ -664,7 +706,7 @@ class LagrangianParticles:
         vec = rho.vector()
         vec.zero()
 
-        self.weight()
+        #self.weight()
 
         dofmap = rho.function_space().dofmap()
         first, last = dofmap.ownership_range()
@@ -673,7 +715,7 @@ class LagrangianParticles:
         for cell_id, cwp in self.particle_map.iteritems():
             dof = dofmap.cell_dofs(cell_id)[0]
             if first <= first+dof < last:
-                values[dof] = cwp.total_weight()
+                values[dof] = cwp.total_weight()/cwp.volume()
 
         vec.set_local(values)
         vec.apply('insert')

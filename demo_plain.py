@@ -35,12 +35,14 @@ lp = LagrangianParticles(V)
 #    return 0.1*(1.0 - erf((r - 0.0015)/0.005))
 def concentration_factor(x):
     r = sqrt((x[0] - 0.5)**2 + (x[1] - 0.75)**2)
-    return 0.1*(1.0 - erf((r - 0.1)/0.03))
+    return 0.1*(1.0 - erf((r - 0.15)/0.05))
 
-circ = CompiledSubDomain("(x[0]-0.5)*(x[0]-0.5) + (x[1]-0.75)*(x[1]-0.75) < 0.5*0.5")
+circ = CompiledSubDomain("(x[0]-0.5)*(x[0]-0.5) + (x[1]-0.75)*(x[1]-0.75) < 0.15*0.15")
 sphere = CompiledSubDomain("(x[0]-0.009)*(x[0]-0.009) + (x[1]-0.06)*(x[1]-0.06) + (x[2]-0.003)*(x[2]-0.003) < 0.01*0.01")
-source = ParticleSource(30, circ, mesh, lp, concentration_factor)
-source.apply_source()
+source = ParticleSource(10, circ, mesh, lp, concentration_factor, RandomCircle([0.5,0.75], 0.15))
+source.apply_source_all(100)
+#source.apply_weight()
+#lp.weight()
 
 
 fig = plt.figure()
@@ -54,8 +56,8 @@ if comm.Get_rank() == 0:
 plt.ion()
 
 
-#lp.particle_density(rho, 0)
-#plot(rho, title='0')
+lp.particle_density(rho, 0)
+plot(rho, title='0')
 
 dt = 0.01
 for step in range(100):
@@ -66,10 +68,12 @@ for step in range(100):
     fig.suptitle('At step %d' % step)     
     fig.canvas.draw()
     fig.clf()
-    source.apply_source()
+    source.apply_source_all(100)
+    #source.apply_weight()
+    #lp.weight()
 
     lp.particle_density(rho, step)
-    plot(rho, title='%d' % step)
+    plot(rho, title='%d' % step, rescale=True)
 
 plt.ioff()
 interactive()

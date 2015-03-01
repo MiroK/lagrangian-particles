@@ -315,8 +315,6 @@ class ParticleSource():
     def apply_source_all(self, n_to_be_added):
         'Adds n_to_be_added particles in random positions in the domain'
         properties_d = dict(w=list())
-        num_particles = self.particles_in_domain()
-        num_cells = sum(comm.allgather(len(self.cells)))
         #n_to_be_added = (self.particles_per_cell*num_cells - num_particles) / (4./3 * np.pi * 0.5**3) 
         N = np.zeros(self.mesh.topology().dim())
         N[:] = np.power(n_to_be_added, 1./self.mesh.topology().dim())

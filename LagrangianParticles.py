@@ -313,9 +313,7 @@ class ParticleSource():
 
 
     def apply_source_all(self, n_to_be_added):
-        '''
-        Adds particles to the entire subdomain if there is less particles than it should have.
-        '''
+        'Adds n_to_be_added particles in random positions in the domain'
         properties_d = dict(w=list())
         num_particles = self.particles_in_domain()
         num_cells = sum(comm.allgather(len(self.cells)))

@@ -401,16 +401,13 @@ class LagrangianParticles:
         self.coefficients_p = np.zeros(self.element.space_dimension())
         self.coefficients_pp = np.zeros(self.element.space_dimension())
         # For VectorFunctionSpace CG1 this is 3x3
-        self.basis_matrix = np.zeros((self.element.space_dimension(),
+        self.basis_matrix_k1 = np.zeros((self.element.space_dimension(),
                                       self.num_tensor_entries))
-        self.basis_matrix_p_k1 = np.zeros((self.element.space_dimension(),
+        self.basis_matrix_k2 = np.zeros((self.element.space_dimension(),
                                       self.num_tensor_entries))
-        self.basis_matrix_p_k2 = np.zeros((self.element.space_dimension(),
-                                      self.num_tensor_entries))
-        
         self.basis_matrix_k3 = np.zeros((self.element.space_dimension(),
                                       self.num_tensor_entries))
-        self.basis_matrix_pp = np.zeros((self.element.space_dimension(),
+        self.basis_matrix_k4 = np.zeros((self.element.space_dimension(),
                                       self.num_tensor_entries))
         
 

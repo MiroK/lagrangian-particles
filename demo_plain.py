@@ -35,7 +35,7 @@ if comm.Get_rank() == 0:
 #plt.ion()
 
 dt = 0.001
-T = 10.0
+T = 20.0
 step = 0
 t = 0
 if comm.Get_rank() == 0:
@@ -45,11 +45,11 @@ while t <= T:
     t = step*dt
     if comm.Get_rank() == 0:
         print "t =", t
-    if t<=5.0:
+    if t<=10.0:
         u = u_plus
     else:
         u = u_minus
-    lp.step(u, dt=dt)
+    lp.step(self, u, t, dt, V)
 
     #if step % 100 == 0:
         #lp.scatter(fig)

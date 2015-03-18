@@ -39,6 +39,7 @@ class Particle:
         self.position = x
         self.properties = {}
         self.properties["w"] = 1.0
+        self.properties["x_p"] = x
         
 
     def send(self, dest):
@@ -487,10 +488,18 @@ class LagrangianParticles:
 		pmap.pop(cell_id, particle)
 	
 
-    def step(self, u, dt):
-        'Move particles by forward Euler x += u*dt'
+    def step(self, u, t, dt, V):
+        'Move particles by the RK4-method'
         start = time.time()
-	
+        u_p = u
+        u_pp = u
+        
+        u.t = t + dt
+        u_p.t = t - dt/2.
+        u_pp.t = t
+        u = df.interpolate(u,V)
+        u_p = df.interpolate(u_p,V)
+        u_pp = df.interpolate(u_pp,V)
         for cwp in self.particle_map.itervalues():
             # Restrict once per cell
             u.restrict(self.coefficients,
@@ -498,15 +507,50 @@ class LagrangianParticles:
                        cwp,
                        cwp.get_vertex_coordinates(),
                        self.ufc_cell)
+            u_p.restrict(self.coefficients_p,
+                       self.element,
+                       cwp,
+                       cwp.get_vertex_coordinates(),
+                       self.ufc_cell)
+            u_pp.restrict(self.coefficients_pp,
+                       self.element,
+                       cwp,
+                       cwp.get_vertex_coordinates(),
+                       self.ufc_cell)
             for particle in cwp.particles:
                 x = particle.position
+                k1 = np.zeros_like(x)
+                k2 = np.zeros_like(x)
+                k3 = np.zeros_like(x)
+                k4 = np.zeros_like(x)
                 # Compute velocity at position x
-                self.element.evaluate_basis_all(self.basis_matrix,
+                self.element.evaluate_basis_all(self.basis_matrix_k1,
                                                 x,
                                                 cwp.get_vertex_coordinates(),
                                                 cwp.orientation())
-                x[:] = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:]
-        
+                k1[:] = np.dot(self.coefficients, self.basis_matrix_k1)[:]
+
+                self.element.evaluate_basis_all(self.basis_matrix_k2,
+                                                x[:] + dt/2*k1[:],
+                                                cwp.get_vertex_coordinates(),
+                                                cwp.orientation())
+                k2[:] = np.dot(self.coefficients_p, self.basis_matrix_k2)[:]
+
+                self.element.evaluate_basis_all(self.basis_matrix_k3,
+                                                x[:] + dt/2*k2[:],
+                                                cwp.get_vertex_coordinates(),
+                                                cwp.orientation())
+                k3[:] = np.dot(self.coefficients_p, self.basis_matrix_k3)[:]
+
+                self.element.evaluate_basis_all(self.basis_matrix_k4,
+                                                x[:] + dt*k3[:],
+                                                cwp.get_vertex_coordinates(),
+                                                cwp.orientation())
+                k4[:] = np.dot(self.coefficients_pp, self.basis_matrix_k4)[:]
+                
+                
+                x[:] = x[:] + dt/6.*(k1[:] + 2*k2[:] + 2*k3[:] + k4[:])
+                
         # Recompute the map
         stop_shift = time.time() - start
         start = time.time()

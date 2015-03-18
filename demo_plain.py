@@ -49,7 +49,7 @@ while t <= T:
         u = u_plus
     else:
         u = u_minus
-    lp.step(self, u, t, dt, V)
+    lp.step(u, t, dt, V)
 
     #if step % 100 == 0:
         #lp.scatter(fig)

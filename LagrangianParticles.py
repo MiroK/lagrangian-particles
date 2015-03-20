@@ -398,8 +398,8 @@ class LagrangianParticles:
             self.num_tensor_entries *= self.element.value_dimension(i)
         # For VectorFunctionSpace CG1 this is 3
         self.coefficients = np.zeros(self.element.space_dimension())
+        self.coefficients_ab = np.zeros(self.element.space_dimension())
         self.coefficients_p = np.zeros(self.element.space_dimension())
-        self.coefficients_pp = np.zeros(self.element.space_dimension())
         # For VectorFunctionSpace CG1 this is 3x3
         self.basis_matrix_k1 = np.zeros((self.element.space_dimension(),
                                       self.num_tensor_entries))
@@ -485,18 +485,9 @@ class LagrangianParticles:
 		pmap.pop(cell_id, particle)
 	
 
-    def step(self, u, t, dt, V):
+    def step(self, u, u_ab, u_p, dt):
         'Move particles by the RK4-method'
         start = time.time()
-        u_p = u
-        u_pp = u
-        
-        u.t = t + dt
-        u_p.t = t - dt/2.
-        u_pp.t = t
-        u = df.interpolate(u,V)
-        u_p = df.interpolate(u_p,V)
-        u_pp = df.interpolate(u_pp,V)
         for cwp in self.particle_map.itervalues():
             # Restrict once per cell
             u.restrict(self.coefficients,
@@ -504,12 +495,12 @@ class LagrangianParticles:
                        cwp,
                        cwp.get_vertex_coordinates(),
                        self.ufc_cell)
-            u_p.restrict(self.coefficients_p,
+            u_ab.restrict(self.coefficients_ab,
                        self.element,
                        cwp,
                        cwp.get_vertex_coordinates(),
                        self.ufc_cell)
-            u_pp.restrict(self.coefficients_pp,
+            u_p.restrict(self.coefficients_p,
                        self.element,
                        cwp,
                        cwp.get_vertex_coordinates(),
@@ -531,19 +522,19 @@ class LagrangianParticles:
                                                 x[:] + dt/2*k1[:],
                                                 cwp.get_vertex_coordinates(),
                                                 cwp.orientation())
-                k2[:] = np.dot(self.coefficients_p, self.basis_matrix_k2)[:]
+                k2[:] = np.dot(self.coefficients_ab, self.basis_matrix_k2)[:]
 
                 self.element.evaluate_basis_all(self.basis_matrix_k3,
                                                 x[:] + dt/2*k2[:],
                                                 cwp.get_vertex_coordinates(),
                                                 cwp.orientation())
-                k3[:] = np.dot(self.coefficients_p, self.basis_matrix_k3)[:]
+                k3[:] = np.dot(self.coefficients_ab, self.basis_matrix_k3)[:]
 
                 self.element.evaluate_basis_all(self.basis_matrix_k4,
                                                 x[:] + dt*k3[:],
                                                 cwp.get_vertex_coordinates(),
                                                 cwp.orientation())
-                k4[:] = np.dot(self.coefficients_pp, self.basis_matrix_k4)[:]
+                k4[:] = np.dot(self.coefficients_p, self.basis_matrix_k4)[:]
                 
                 
                 x[:] = x[:] + dt/6.*(k1[:] + 2*k2[:] + 2*k3[:] + k4[:])

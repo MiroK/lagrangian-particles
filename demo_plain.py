@@ -31,6 +31,7 @@ fig = plt.figure()
 
 if comm.Get_rank() == 0:
     fig0.show()
+    fig.show()
 
 
 #plt.ion()

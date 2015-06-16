@@ -38,11 +38,12 @@ class RandomGenerator(object):
         self.dim = len(domain)
         self.rank = comm.Get_rank()
 
-    def generate(self, N, method='full'):
+    def generate(self, N, method='full', seed=False):
         'Genererate points.'
         assert len(N) == self.dim
         assert method in ['full', 'tensor', 'uniform']
-
+        if seed != False:
+            np.random.seed(seed)
         if self.rank == 0:
             # Generate random points for all coordinates
             if method == 'full':
@@ -103,6 +104,16 @@ class RandomCircle(RandomGenerator):
                                  lambda x: sqrt((x[0]-center[0])**2 +
                                                 (x[1]-center[1])**2) < radius
                                  )
+class RandomCylinder(RandomGenerator):
+    def __init__(self, center, radius, height):
+        assert radius > 0
+        domain = [[center[0]-radius, center[0]+radius],
+                 [center[1] -height/2., center[1] + height/2.],
+                 [center[2]-radius, center[2]+radius]]
+        RandomGenerator.__init__(self, domain,
+                                 lambda x: sqrt((x[0]-center[0])**2 +
+                                                (x[2]-center[2])**2) < radius
+                                 )
 
 class RandomSphere(RandomGenerator):
     def __init__(self, center, radius):
@@ -113,7 +124,7 @@ class RandomSphere(RandomGenerator):
         RandomGenerator.__init__(self, domain,
                                  lambda x: sqrt((x[0]-center[0])**2 +
                                                 (x[1]-center[1])**2 +
-						(x[2]-center[2])**2) < radius
+						                        (x[2]-center[2])**2) < radius
                                  )
 
 # -----------------------------------------------------------------------------

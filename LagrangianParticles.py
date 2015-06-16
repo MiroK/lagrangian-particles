@@ -22,8 +22,6 @@ from particle_generators import RandomCircle, RandomSphere
 from mpl_toolkits.mplot3d import Axes3D
 
 
-__DEBUG__ = False
-
 # Disable printing
 __DEBUG__ = False
 
@@ -104,29 +102,52 @@ class CellWithParticles(df.Cell):
     def mult_weight(self, factor):
         for p in self.particles:
             p.properties["w"] = p.properties["w"]*factor
-        
+       
 class ParticleSource():
+    '''
+    Injects particles in a specified subdomain defined by random_generator
+    '''
+    def __init__(self, lp, random_generator, concentration_factor=lambda x: 1.0):
+        self.lp = lp
+        self.mesh = self.lp.mesh
+        self.random_generator = random_generator
+        self.concentration_factor = concentration_factor
+
+    def apply(self, n_to_be_added, seed=False):
+        '''
+        Adds n_to_be_added particles in random positions in the domain.
+        Seeding makes sure the particles are added in same points for multiple runs.
+        '''
+        properties_d = dict(w=list())
+        #n_to_be_added = (self.particles_per_cell*num_cells - num_particles) / (4./3 * np.pi * 0.5**3) 
+        N = np.zeros(self.mesh.topology().dim())
+        N[:] = np.power(n_to_be_added, 1./self.mesh.topology().dim())
+        particles_to_be_added = self.random_generator.generate(N, method="full", seed=seed) 
+        for p in particles_to_be_added:
+            properties_d["w"].append(self.concentration_factor(p))
+        self.lp.add_particles(particles_to_be_added, properties_d)
+
+
+class ParticleDirichlet():
     '''
     Fills all cells within a domain up with particles such that the density is constant over the area.
     If N particles leave one cell, we place N particles on a random position in the cell, so the density remains constant.
     The number of particles we wish to have in one cell depends on its volume. The number of particles in each cell
     is: mean density * cell.volume()
     '''
-    def __init__(self, particles_per_cell, subdomain, mesh, lp, consentration_factor=lambda x: 1.0, random_generator=None):
+    def __init__(self, particles_per_cell, subdomain, lp, concentration_factor=lambda x: 1.0):
         self.lp = lp
         self.particles_per_cell = particles_per_cell
         self.subdomain = subdomain
-        self.mesh = mesh
+        self.mesh = lp.mesh
         self.cells = self.find_cell_ids()
         self.mean_volume = self.find_mean_volume()
-        self.concentration_factor = consentration_factor
-        self.random_generator = random_generator
+        self.concentration_factor = concentration_factor
 
     def num_global_cells(self):
         n = len(self.cells)
         n = comm.allgather(n)
         return sum(n)
-        
         
     def find_cell_ids(self):
         '''return list of cell ids of cells within the domain'''
@@ -252,7 +273,7 @@ class ParticleSource():
         return x
 
         
-    def apply_source(self):
+    def apply(self):
         '''
         Adds particles to the cells that have less particles than it should.
 	    Removes particles if too many
@@ -311,18 +332,6 @@ class ParticleSource():
                 cwp = self.lp.particle_map[cell_id]
                 midpoint = self.midpoint(cell_id)
                 cwp.set_concentration(self.concentration_factor)
-
-
-    def apply_source_all(self, n_to_be_added):
-        'Adds n_to_be_added particles in random positions in the domain'
-        properties_d = dict(w=list())
-        #n_to_be_added = (self.particles_per_cell*num_cells - num_particles) / (4./3 * np.pi * 0.5**3) 
-        N = np.zeros(self.mesh.topology().dim())
-        N[:] = np.power(n_to_be_added, 1./self.mesh.topology().dim())
-        particles_to_be_added = self.random_generator.generate(N, method="full") 
-        for p in particles_to_be_added:
-            properties_d["w"].append(self.concentration_factor(p))
-        self.lp.add_particles(particles_to_be_added, properties_d)
 
 
 
@@ -391,25 +400,22 @@ class LagrangianParticles:
         # interpolation. This updaea mounts to computing the basis matrix
         self.ufc_cell = ufc.cell()
         self.dim = self.mesh.topology().dim()
-
+        self.u_mid = df.Function(V)
         self.element = V.dolfin_element()
         self.num_tensor_entries = 1
         for i in range(self.element.value_rank()):
             self.num_tensor_entries *= self.element.value_dimension(i)
         # For VectorFunctionSpace CG1 this is 3
         self.coefficients = np.zeros(self.element.space_dimension())
-        self.coefficients_ab = np.zeros(self.element.space_dimension())
-        self.coefficients_p = np.zeros(self.element.space_dimension())
+        self.coefficients_mid = np.zeros(self.element.space_dimension())
         # For VectorFunctionSpace CG1 this is 3x3
         self.basis_matrix_k1 = np.zeros((self.element.space_dimension(),
                                       self.num_tensor_entries))
         self.basis_matrix_k2 = np.zeros((self.element.space_dimension(),
                                       self.num_tensor_entries))
-        self.basis_matrix_k3 = np.zeros((self.element.space_dimension(),
-                                      self.num_tensor_entries))
-        self.basis_matrix_k4 = np.zeros((self.element.space_dimension(),
-                                      self.num_tensor_entries))
+
         
+        self.num_particles_leaving = 0
 
         # Allocate a dictionary to hold all particles
         self.particle_map = CellParticleMap()
@@ -471,10 +477,17 @@ class LagrangianParticles:
             # Print particle info
             if self.__debug:
                 for i in missing:
-                    print 'Missing', list_of_particles[i].position
+                    try:
+                        print 'Missing', list_of_particles[i].position
+                    except:
+                        print 'Missing', list_of_particles[i]
 
                 n_duplicit = len(np.where(all_found > 1)[0])
                 print 'There are %d duplicit particles' % n_duplicit
+        else:
+            n_missing = 0
+        
+        self.num_particles_leaving += n_missing
     
     def remove_particles(self, list_of_particles):
 	'Remove particles from home processors'
@@ -485,9 +498,13 @@ class LagrangianParticles:
 		pmap.pop(cell_id, particle)
 	
 
-    def step(self, u, dt):
-        'Move particles by the RK4-method'
+    def step(self, u, u_1, dt):
+        'Move particles by midpoint method'
         start = time.time()
+        u_mid = self.u_mid
+        u_mid.vector().zero()
+        u_mid.vector().axpy(0.5,u.vector())
+        u_mid.vector().axpy(0.5,u_1.vector())
         for cwp in self.particle_map.itervalues():
             # Restrict once per cell
             u.restrict(self.coefficients,
@@ -495,39 +512,28 @@ class LagrangianParticles:
                        cwp,
                        cwp.get_vertex_coordinates(),
                        self.ufc_cell)
+
+            u_mid.restrict(self.coefficients_mid,
+                       self.element,
+                       cwp,
+                       cwp.get_vertex_coordinates(),
+                       self.ufc_cell)
+
             for particle in cwp.particles:
                 x = particle.position
                 k1 = np.zeros_like(x)
-                k2 = np.zeros_like(x)
-                k3 = np.zeros_like(x)
-                k4 = np.zeros_like(x)
                 # Compute velocity at position x
                 self.element.evaluate_basis_all(self.basis_matrix_k1,
                                                 x,
                                                 cwp.get_vertex_coordinates(),
                                                 cwp.orientation())
-                k1[:] = np.dot(self.coefficients, self.basis_matrix_k1)[:]
+                k1[:] = x[:] + dt/2*np.dot(self.coefficients, self.basis_matrix_k1)[:]
 
                 self.element.evaluate_basis_all(self.basis_matrix_k2,
-                                                x[:] + dt/2*k1[:],
+                                                k1[:],
                                                 cwp.get_vertex_coordinates(),
                                                 cwp.orientation())
-                k2[:] = np.dot(self.coefficients, self.basis_matrix_k2)[:]
-
-                self.element.evaluate_basis_all(self.basis_matrix_k3,
-                                                x[:] + dt/2*k2[:],
-                                                cwp.get_vertex_coordinates(),
-                                                cwp.orientation())
-                k3[:] = np.dot(self.coefficients, self.basis_matrix_k3)[:]
-
-                self.element.evaluate_basis_all(self.basis_matrix_k4,
-                                                x[:] + dt*k3[:],
-                                                cwp.get_vertex_coordinates(),
-                                                cwp.orientation())
-                k4[:] = np.dot(self.coefficients, self.basis_matrix_k4)[:]
-                
-                
-                x[:] = x[:] + dt/6.*(k1[:] + 2*k2[:] + 2*k3[:] + k4[:])
+                x[:] = x[:] + dt*np.dot(self.coefficients_mid, self.basis_matrix_k2)[:]
                 
         # Recompute the map
         stop_shift = time.time() - start
@@ -693,7 +699,7 @@ class LagrangianParticles:
                                     edgecolor='none', s=2.0)
 
             ax.legend(loc='best')
-            #ax.axis([0, 1, 0, 1])
+            ax.axis([0, 1, 0, 1])
     
     
     def bar(self, fig):
@@ -714,9 +720,19 @@ class LagrangianParticles:
             return np.sum(all_particles)
         else:
             return None
+
+    def average_density(self, rho):
+        'Total average density'
+        average = np.average(rho.vector().get_local())
+        average = comm.allgather(average)
+        average = np.average(average)
+        return np.average(comm.allgather(average))
         
     def particle_density(self, rho, normalize=0.0):
-        'Make rho represent particle density.'
+        '''
+        Make rho represent particle density, given as
+        particles per mm^3
+        '''
         assert rho.ufl_element().family() == 'Discontinuous Lagrange'
         assert rho.ufl_element().degree() == 0
         assert rho.ufl_element().value_shape() == ()
@@ -733,7 +749,7 @@ class LagrangianParticles:
         for cell_id, cwp in self.particle_map.iteritems():
             dof = dofmap.cell_dofs(cell_id)[0]
             if first <= first+dof < last:
-                values[dof] = cwp.total_weight()/cwp.volume()
+                values[dof] = cwp.total_weight()/cwp.volume()/1000.0**3
 
         vec.set_local(values)
         vec.apply('insert')

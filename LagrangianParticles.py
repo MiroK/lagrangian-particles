@@ -37,7 +37,6 @@ class Particle:
         self.position = x
         self.properties = {}
         self.properties["w"] = 1.0
-        self.properties["x_p"] = x
         
 
     def send(self, dest):

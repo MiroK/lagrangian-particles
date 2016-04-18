@@ -25,6 +25,8 @@ if comm.Get_rank() == 0:
 
 plt.ion()
 
+save = False
+
 dt = 0.01
 for step in range(500):
     lp.step(u, dt=dt)
@@ -33,6 +35,6 @@ for step in range(500):
     fig.suptitle('At step %d' % step)
     fig.canvas.draw()
 
-    plt.savefig('img%s.png' % str(step).zfill(4))
+    if save: plt.savefig('img%s.png' % str(step).zfill(4))
 
     fig.clf()

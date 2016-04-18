@@ -15,7 +15,7 @@ from mpi4py import MPI as pyMPI
 from collections import defaultdict
 
 # Disable printing
-__DEBUG__ = True
+__DEBUG__ = False
 
 comm = pyMPI.COMM_WORLD
 
@@ -23,6 +23,7 @@ comm = pyMPI.COMM_WORLD
 __UINT32_MAX__ = np.iinfo('uint32').max
 
 class Particle:
+    __slots__ = ['position', 'properties']
     'Lagrangian particle with position and some other passive properties.'
     def __init__(self, x):
         self.position = x

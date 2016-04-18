@@ -76,8 +76,8 @@ class RandomGenerator(object):
 class RandomRectangle(RandomGenerator):
     def __init__(self, ll, ur):
         # a is lower left, b is upper right
-        ax, ay = ll
-        bx, by = ur
+        ax, ay = ll.x(), ll.y()
+        bx, by = ur.x(), ur.y()
         assert ax < bx and ay < by
         RandomGenerator.__init__(self, [[ax, bx], [ay, by]], lambda x: True)
 
@@ -96,10 +96,11 @@ class RandomCircle(RandomGenerator):
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
+    from dolfin import Point
 
-    r_rectangle = RandomRectangle([0, 0], [1, 5]).generate([100, 100],
+    r_rectangle = RandomRectangle(Point(0, 0), Point(1, 5)).generate([100, 100],
                                                             method='tensor')
-    r_circle = RandomCircle([0, 0], 1).generate([100, 100])
+    r_circle = RandomCircle(Point(0, 0), 1).generate([100, 100])
 
     for points in [r_rectangle, r_circle]:
         plt.figure()

@@ -1,6 +1,6 @@
 from LagrangianParticles import LagrangianParticles
 from particle_generators import RandomRectangle
-from dolfin import VectorFunctionSpace, interpolate, Expression, RectangleMesh
+from dolfin import VectorFunctionSpace, interpolate, Expression, RectangleMesh, Point
 import matplotlib.pyplot as plt
 import numpy as np
 from mpi4py import MPI as pyMPI
@@ -9,8 +9,8 @@ import matplotlib.cm as cmx
 
 comm = pyMPI.COMM_WORLD
 
-mesh = RectangleMesh(0, 0, 1, 1, 10, 10)
-particle_positions = RandomRectangle(0.125, 0.25, 0.75, 0.8).generate([100,
+mesh = RectangleMesh(Point(0, 0), Point(1, 1), 10, 10)
+particle_positions = RandomRectangle(Point(0.125, 0.25), Point(0.75, 0.8)).generate([100,
                                                                        100])
 
 V = VectorFunctionSpace(mesh, 'CG', 1)

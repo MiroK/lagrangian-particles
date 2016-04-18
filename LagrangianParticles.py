@@ -144,6 +144,14 @@ class LagrangianParticles:
         # Dummy particle for receiving/sending at [0, 0, ...]
         self.particle0 = Particle(np.zeros(self.mesh.geometry().dim()))
 
+
+    def __iter__(self):
+        '''Iterate over all particles.'''
+        for cwp in self.particle_map.itervalues():
+            for particle in cwp.particles:
+                yield particle
+
+
     def add_particles(self, list_of_particles, properties_d=None):
         '''Add particles and search for their home on all processors.
            Note that list_of_particles must be same on all processes. Further

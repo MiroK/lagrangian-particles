@@ -11,15 +11,11 @@ DOLFIN
 import dolfin as df
 import numpy as np
 import copy
-import ufc
 from mpi4py import MPI as pyMPI
 from collections import defaultdict
-import matplotlib.colors as colors
-import matplotlib.cm as cmx
-import time
 
 # Disable printing
-__DEBUG__ = False
+__DEBUG__ = True
 
 comm = pyMPI.COMM_WORLD
 
@@ -121,7 +117,6 @@ class LagrangianParticles:
         # advantageous to compute the resctriction once for cell and only
         # update basis_i(x) depending on x, i.e. particle where we make
         # interpolation. This updaea mounts to computing the basis matrix
-        self.ufc_cell = ufc.cell()
         self.dim = self.mesh.topology().dim()
 
         self.element = V.dolfin_element()
@@ -200,14 +195,14 @@ class LagrangianParticles:
 
     def step(self, u, dt):
         'Move particles by forward Euler x += u*dt'
-        start = time.time()
+        start = df.Timer('shift')
         for cwp in self.particle_map.itervalues():
             # Restrict once per cell
             u.restrict(self.coefficients,
                        self.element,
                        cwp,
                        cwp.get_vertex_coordinates(),
-                       self.ufc_cell)
+                       cwp)
             for particle in cwp.particles:
                 x = particle.position
                 # Compute velocity at position x
@@ -217,10 +212,10 @@ class LagrangianParticles:
                                                 cwp.orientation())
                 x[:] = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:]
         # Recompute the map
-        stop_shift = time.time() - start
-        start = time.time()
+        stop_shift = start.stop()
+        start =df.Timer('relocate')
         info = self.relocate()
-        stop_reloc = time.time() - start
+        stop_reloc = start.stop()
         # We return computation time per process
         return (stop_shift, stop_reloc)
 
@@ -303,6 +298,9 @@ class LagrangianParticles:
 
     def scatter(self, fig, skip=1):
         'Scatter plot of all particles on process 0'
+        import matplotlib.colors as colors
+        import matplotlib.cm as cmx
+
         ax = fig.gca()
 
         p_map = self.particle_map
@@ -363,5 +361,3 @@ class LagrangianParticles:
             return np.sum(all_particles)
         else:
             return None
-
-

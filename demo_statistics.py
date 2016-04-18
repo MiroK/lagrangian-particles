@@ -39,7 +39,7 @@ my_count = np.zeros(1, 'I')
 all_count = np.zeros(comm.Get_size(), 'I')
 
 # Steps to be used in computation
-steps = np.arange(500)
+steps = np.arange(2000)
 
 if comm.Get_rank() == 0:
     procs = range(comm.Get_size())

@@ -32,4 +32,7 @@ for step in range(500):
     lp.scatter(fig)
     fig.suptitle('At step %d' % step)
     fig.canvas.draw()
+
+    plt.savefig('img%s.png' % str(step).zfill(4))
+
     fig.clf()

@@ -15,7 +15,8 @@ particle_positions = RandomRectangle(Point(0.125, 0.25), Point(0.75, 0.8)).gener
 
 V = VectorFunctionSpace(mesh, 'CG', 1)
 u = interpolate(Expression(("-2*sin(pi*x[1])*cos(pi*x[1])*pow(sin(pi*x[0]),2)",
-                            "2*sin(pi*x[0])*cos(pi*x[0])*pow(sin(pi*x[1]),2)")),
+                            "2*sin(pi*x[0])*cos(pi*x[0])*pow(sin(pi*x[1]),2)"),
+                           degree=4),
                 V)
 lp = LagrangianParticles(V)
 lp.add_particles(particle_positions)
@@ -42,7 +43,7 @@ all_count = np.zeros(comm.Get_size(), 'I')
 steps = np.arange(2000)
 
 if comm.Get_rank() == 0:
-    procs = range(comm.Get_size())
+    procs = list(range(comm.Get_size()))
     # Data for history of cpu time per step and particle count
     cpu_histories = np.zeros((len(steps), len(procs)))
     count_histories = np.zeros_like(cpu_histories)

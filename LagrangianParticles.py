@@ -108,7 +108,7 @@ class LagrangianParticles:
 
         self.V = V
         self.mesh = V.mesh()
-        self.mesh.init(2, 2)  # Cell-cell connectivity for neighbors of cell
+        self.mesh.init(*(self.mesh.topology().dim(), )*2)  # Cell-cell connectivity for neighbors of cell
         self.tree = self.mesh.bounding_box_tree()  # Tree for isection comput.
 
         # Allocate some variables used to look up the velocity

@@ -1,6 +1,7 @@
 from LagrangianParticles import LagrangianParticles
 from particle_generators import RandomCircle
 import matplotlib.pyplot as plt
+from boundary_collisions import remove_particles
 from dolfin import VectorFunctionSpace, interpolate, RectangleMesh, Expression, Point
 from mpi4py import MPI as pyMPI
 
@@ -25,11 +26,16 @@ if comm.Get_rank() == 0:
 
 plt.ion()
 
+# Remove particles based on ...
+predicates = (lambda x: x[1] < 0.5 and x[0] > 0.75, )
+
 save = False
 
 dt = 0.01
 for step in range(500):
     lp.step(u, dt=dt)
+
+    lp = remove_particles(lp, predicates)
 
     lp.scatter(fig)
     fig.suptitle('At step %d' % step)

@@ -221,7 +221,7 @@ class LagrangianParticles:
                 x[:] = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:]
         # Recompute the map
         stop_shift = start.stop()
-        start =df.Timer('relocate')
+        start = df.Timer('relocate')
         info = self.relocate()
         stop_reloc = start.stop()
         # We return computation time per process

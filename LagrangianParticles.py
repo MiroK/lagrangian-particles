@@ -27,7 +27,7 @@ class Particle:
     'Lagrangian particle with position and some other passive properties.'
     def __init__(self, x):
         self.position = x
-        self.prev_position = np.zeros_like(x)
+        self.prev_position = np.nan*np.ones_like(x)  # NaN are to be used as a flag
         self.properties = {}
 
     def send(self, dest):

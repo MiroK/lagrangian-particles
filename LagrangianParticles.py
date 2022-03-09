@@ -23,10 +23,11 @@ comm = pyMPI.COMM_WORLD
 __UINT32_MAX__ = np.iinfo('uint32').max
 
 class Particle:
-    __slots__ = ['position', 'properties']
+    __slots__ = ['position', 'prev_position', 'properties']
     'Lagrangian particle with position and some other passive properties.'
     def __init__(self, x):
         self.position = x
+        self.prev_position = np.zeros_like(x)
         self.properties = {}
 
     def send(self, dest):
@@ -218,6 +219,9 @@ class LagrangianParticles:
 
                 for i, row in enumerate(self.basis_matrix):
                     row[:] = self.element.evaluate_basis(i, x, cell_vtx, cell_orient)
+                # Remember the previous one
+                particle.prev_position[:] = 1*x
+                # Update to new
                 x[:] = x[:] + dt*np.dot(self.coefficients, self.basis_matrix)[:]
         # Recompute the map
         stop_shift = start.stop()
